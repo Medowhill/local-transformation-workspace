@@ -1,0 +1,4 @@
+interface:
+  display_name: "Crat"
+  short_description: "Guide to Crat passes and rustc APIs"
+  default_prompt: "Use $crat to understand or modify Crat passes under crat."

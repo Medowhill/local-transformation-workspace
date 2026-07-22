@@ -126,7 +126,8 @@ The function before pointer-type transformation.
 ### Source signature
 
 The signature in the source function. In skeleton JSON it is a presentation
-copy with `#[no_mangle]` and `extern "C"` removed as specified in Section 5.2;
+copy with `#[no_mangle]` and any explicit function ABI removed as specified in
+Section 5.2;
 the input project's real header is unchanged.
 
 ### Target skeleton
@@ -310,14 +311,22 @@ The target skeleton:
 - uses the target signature;
 - materializes an explicit type for every simple local binding, using the
   analyzed target type for pointer locals;
+- preserves an existing explicit local type's surface syntax unless a pointer
+  decision changes that local's representation;
 - preserves the source statement and control structure;
 - uses parseable placeholders such as `todo!()` for unimplemented expressions;
 - does not apply transformation-time pointer demotion.
 
-Control structures are preserved at any nesting depth, including their branch,
-body, pattern, and nested-statement layout. Conditions, scrutinees, iterators,
-initializers, assignments, calls, return values, and other non-control
-expression payloads are replaced with `todo!()` as appropriate.
+Control structures are preserved at any nesting depth in the statement/control
+tree, including their branch, body, pattern, and nested-statement layout. A
+control or block expression may be preserved only when it is the root of a
+supported statement payload, initializer, return value, break value, or match
+arm block tail. A control/block expression nested beneath a non-control wrapper
+such as a call, constructor, operator, tuple, cast, or assignment is rejected
+with a structured generation error. A later normalization pass may hoist such
+expressions before Phase 1. Conditions, scrutinees, iterators, initializers,
+assignments, calls, return values, and other non-control expression payloads
+are replaced with `todo!()` as appropriate.
 
 Annotated source functions, item definitions, declarations, and target
 skeletons are produced from a separately parsed copy of the exact single-file
@@ -363,7 +372,7 @@ AST.
 Before rendering any JSON Rust snippet, clone/sanitize the presentation AST:
 
 - remove `#[no_mangle]` attributes; and
-- change source-defined `extern "C" fn` headers to the default Rust ABI.
+- change every source-defined explicit function ABI to the default Rust ABI.
 
 Apply this to `annotated_source`, `annotated_skeleton`, `source_signature`,
 `target_signature`, and any emitted declaration/definition on which the
@@ -429,8 +438,10 @@ Include only:
 - `Union`.
 
 All other item kinds receive no records. In supported Phase 1 input this
-principally covers `ExternCrate`, `Use`, `ConstBlock`, inline `Mod`,
-`ForeignMod`, and `GlobalAsm`. Traits, impls, macro definitions, item-producing
+principally covers `ExternCrate`, `Use`, inline `Mod`, `ForeignMod`, and
+`GlobalAsm`. `ConstBlock` is an expression kind, not an item kind, in the
+pinned Rust compiler and is therefore not part of this item-filtering list.
+Traits, impls, macro definitions, item-producing
 macro invocations, external modules, and `cfg`-selected alternatives are
 excluded by the input contract rather than being features that Phase 1 must
 validate exhaustively.
@@ -1483,10 +1494,11 @@ Implement and test:
   value and type items;
 - `todo!()` placeholders;
 - statement annotations;
-- explicit errors for empty statements and non-block `match` arms;
+- explicit errors for empty statements, non-block `match` arms, and control or
+  block expressions nested beneath non-control expression wrappers;
 - source and target signatures;
-- render-only removal of `#[no_mangle]` and `extern "C"`, with all project and
-  analysis input left unchanged;
+- render-only removal of `#[no_mangle]` and every explicit function ABI, with
+  all project and analysis input left unchanged;
 - preservation of `derive`, `repr`, and other supported surface attributes;
 - included-item filtering;
 - dependency lists in value and type namespaces;

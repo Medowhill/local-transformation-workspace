@@ -23,7 +23,7 @@ The cases below are the complete set of Phase 1 tests planned for the initial
 implementation. Later bug fixes may add regression tests, but Phase 1 is not
 complete until every case in this document is implemented and passing.
 
-The initial suite contains 80 named cases. Case identifiers are intentionally
+The suite contains 81 named cases. Case identifiers are intentionally
 stable; gaps correspond to cases removed after the input contract was
 clarified and are not tests to implement.
 
@@ -33,7 +33,7 @@ clarified and are not tests to implement.
 | Item discovery/rendering | 11 |
 | Dependencies | 22 |
 | Statement labels | 7 |
-| Skeleton shape | 14 |
+| Skeleton shape | 15 |
 | Target types/pointer analysis | 16 |
 | Whole-output/errors | 4 |
 
@@ -76,7 +76,7 @@ All functional coverage targets the in-memory skeleton-generation API.
 
 Tests will live beside the implementation:
 
-- all 80 named Phase 1 tests, including P1-TYPE-17, under
+- all 81 named Phase 1 tests, including P1-TYPE-17, under
   `crates/tools/src/` in `#[cfg(test)]` modules.
 
 The tools crate may call public pointer-replacer analysis APIs in its tests.
@@ -120,7 +120,8 @@ one physical source file, possibly with inline modules, and no external
 modules, traits, impls, macro definitions, item-producing macro invocations,
 `cfg` attributes, statement attributes, or explicit `unsafe` blocks. Every
 supported `match` arm body is a block expression. Empty statements and
-non-block match arms occur only in their explicit rejection tests.
+non-block match arms and control expressions beneath non-control wrappers occur
+only in their explicit rejection tests.
 
 Generation parses the exact source string into a surface AST for JSON
 rendering and must not render from `utils::ast::expanded_ast(tcx)`. HIR/MIR is
@@ -146,7 +147,7 @@ items are outside the test contract. P1-ITEM-02 covers this behavior inside an
 inline module, and P1-ITEM-10 covers root-level preservation and filtering.
 
 All emitted Rust text is presentation-sanitized: remove `#[no_mangle]` and use
-the default Rust ABI instead of `extern "C"`. This applies to annotated source,
+the default Rust ABI instead of every explicit function ABI. This applies to annotated source,
 annotated skeleton, both signatures, and declarations/definitions. The
 original compiler input is not sanitized or changed, so analysis still sees
 the real attributes and ABI. Preserve `unsafe`, visibility, names, parameter
@@ -177,13 +178,14 @@ For skeleton holes, Phase 1 replaces a simple assignment expression as a whole:
 `place = value` and `place += value` each become `todo!()`. `return value` and
 `break value` retain their keyword while their value becomes `todo!()`.
 
-Preserving a control/block expression at any nesting depth takes precedence
-over that ordinary payload rule. If an initializer, assignment RHS, return
-value, or other payload contains an `if`, `match`, loop, or block, the enclosing
-syntactic role needed to retain that control expression is preserved; its
-condition/scrutinee/iterator and non-control leaves become holes. This rule
-reconciles the ordinary initializer cases in P1-SKEL-03 with the
-nested-control case in P1-SKEL-06.
+A control/block expression is preserved only when it is the root of a supported
+statement payload, initializer, return value, break value, or match-arm block
+tail. Its condition/scrutinee/iterator and non-control leaves become holes.
+Control remains arbitrarily nestable through control bodies, as in P1-SKEL-06,
+but an `if`, `match`, loop, or block nested beneath a non-control wrapper such
+as a call, constructor, operator, tuple, cast, or assignment is rejected. This
+keeps skeleton structure suitable for local rule extraction; a future upstream
+normalization may hoist such control expressions.
 
 ## 4. JSON contract tests
 
@@ -489,15 +491,18 @@ one minimal `rustc_ast::Item` for each nonrecord kind that can occur in the
 supported input model:
 
 ```text
-ExternCrate, Use, ConstBlock, Mod, ForeignMod, GlobalAsm
+ExternCrate, Use, Mod, ForeignMod, GlobalAsm
 ```
 
 Expected output from the inclusion predicate is this exact table:
 
 ```text
-ExternCrate=false  Use=false       ConstBlock=false
-Mod=false          ForeignMod=false GlobalAsm=false
+ExternCrate=false  Use=false  Mod=false
+ForeignMod=false   GlobalAsm=false
 ```
+
+`ConstBlock` is an expression kind, not an item kind, in the pinned Rust
+compiler and is therefore not part of this direct item-predicate test.
 
 Traits, impls, macro definitions, item-producing macro calls, delegations, and
 external modules are upstream-excluded inputs and do not need predicate tests.
@@ -592,7 +597,7 @@ Exact Rust input:
 
 ```rust
 #[no_mangle]
-pub unsafe extern "C" fn add(x: i32, y: i32) -> i32 {
+pub unsafe extern "system" fn add(x: i32, y: i32) -> i32 {
     x + y
 }
 ```
@@ -609,7 +614,7 @@ annotated_skeleton =
 ```
 
 Both complete functions retain visibility, `unsafe`, name, parameter names,
-and types. The render-only sanitizer removes `#[no_mangle]` and `extern "C"`
+and types. The render-only sanitizer removes `#[no_mangle]` and the explicit ABI
 from every emitted text field, but the compiler analysis runs on the unchanged
 input shown above. Neither signature contains `proctor` or a body. Both
 dependency lists are `[]`.
@@ -1186,6 +1191,7 @@ unsafe fn callee(_x: i32) {}
 pub unsafe fn f() -> i32 {
     let x = 1;
     callee(x);
+    println!("{x}");
     -x + 2
 }
 ```
@@ -1196,12 +1202,14 @@ Expected normalized skeleton body:
 {
     #[proctor(0)] let x: i32 = todo!();
     #[proctor(1)] todo!();
-    #[proctor(2)] todo!()
+    #[proctor(2)] todo!();
+    #[proctor(3)] todo!()
 }
 ```
 
-The source body still contains `1`, `callee(x)`, and `-x + 2` at labels
-`0,1,2`.
+The source body still contains `1`, `callee(x)`, `println!("{x}")`, and
+`-x + 2` at labels `0,1,2,3`. The standalone macro statement is a labeled hole,
+not a generation panic.
 
 ### P1-SKEL-02 `materializes_inferred_types_for_simple_bindings`
 
@@ -1244,10 +1252,11 @@ Exact Rust input:
 
 ```rust
 struct T;
+type Count = i32;
 pub unsafe fn f() {
     let mut a = 1;
     let x: T;
-    let y: i32 = 2;
+    let y: Count = 2;
     x = T;
     let _ = (a, x, y);
 }
@@ -1258,7 +1267,7 @@ Expected normalized skeleton statements:
 ```rust
 #[proctor(0)] let mut a: i32 = todo!();
 #[proctor(1)] let x: T;
-#[proctor(2)] let y: i32 = todo!();
+#[proctor(2)] let y: Count = todo!();
 #[proctor(3)] todo!();
 #[proctor(4)] let _ = todo!();
 ```
@@ -1621,9 +1630,38 @@ function_path = "f"
 message contains = "match arm body must be a block expression"
 ```
 
-No records or JSON are returned. This is the one explicit rejection test for
-the supported-input match-arm invariant; other upstream-excluded constructs do
-not require validators.
+No records or JSON are returned. This is the explicit rejection test for the
+supported-input match-arm invariant.
+
+### P1-SKEL-16 `rejects_control_nested_beneath_non_control_payloads`
+
+Run these two exact Rust inputs independently:
+
+```rust
+pub unsafe fn assign(flag: bool) {
+    let mut value = None;
+    value = Some(if flag { 1 } else { 2 });
+    let _ = value;
+}
+```
+
+```rust
+pub unsafe fn wrapped_return(flag: bool) -> Option<i32> {
+    return Some(if flag { 1 } else { 2 });
+}
+```
+
+Both produce the structured error:
+
+```text
+kind = NestedControlPayload
+function_path = "assign" or "wrapped_return"
+message contains = "control expression nested beneath a non-control payload"
+```
+
+No records or JSON are returned. Direct root control payloads and control
+nested through other control bodies remain supported; this rejection applies
+only when a non-control expression wrapper intervenes.
 
 ## 9. Target-type and pointer-analysis tests
 
@@ -1869,15 +1907,27 @@ pub unsafe fn keep_alias_raw(a: *mut i32, b: *mut i32) -> *mut i32 {
     a
 }
 
-pub unsafe fn alias_caller() -> *mut i32 {
+pub unsafe fn drive_alias(p: *mut i32) -> *mut i32 {
+    keep_alias_raw(p, p)
+}
+
+pub unsafe fn main_0() {
+    let _ = drive_alias(
+        malloc(core::mem::size_of::<i32>()) as *mut i32,
+    );
+}
+
+pub unsafe fn alias_caller() -> i32 {
     let mut x = 7i32;
     let p: *mut i32 = &mut x;
-    keep_alias_raw(p, p)
+    *p = 8;
+    *p
 }
 
 pub unsafe fn global_escape() {
     let p: *mut *mut i32 =
         malloc(core::mem::size_of::<*mut i32>()) as *mut *mut i32;
+    *p = core::ptr::null_mut();
     SLOT = p;
 }
 ```
@@ -1888,6 +1938,16 @@ Expected:
 - both `keep_alias_raw` parameters remain `*mut i32`; and
 - `global_escape`'s `p` local remains `*mut *mut i32` because it escapes through
   `SLOT`.
+
+`main_0` seeds Andersen's whole-program points-to analysis with a concrete
+allocation flowing into `drive_alias`. The latter then supplies the
+repeated-argument evidence that requires `keep_alias_raw`'s parameters to
+remain raw. `alias_caller` is intentionally independent of that call boundary:
+it verifies that the raw-retention cases elsewhere in this fixture do not
+prevent an ordinary non-escaping scalar local from being promoted to
+`&mut i32`.
+`global_escape` writes through `p` before storing it so that the outer pointer's
+mutability is observable as well as its required raw representation.
 
 Raw retention is not confused with transformation-time demotion.
 
@@ -2222,7 +2282,7 @@ JSON returned = none
 
 Phase 1 testing is complete when:
 
-- all 80 test cases in Sections 4 through 10 exist and pass under
+- all 81 test cases in Sections 4 through 10 exist and pass under
   `cargo test --workspace`;
 - tests perform no filesystem writes or project creation;
 - no test depends on execution order;
@@ -2236,8 +2296,8 @@ Phase 1 testing is complete when:
 - no tool-mode structured or rendered result contains a cursor variant;
 - the JSON renderer uses the separately parsed surface AST structurally mapped
   to HIR in recursively propagated unexpanded mode, skips all automatically
-  derived HIR items, preserves derive attributes, and sanitizes `#[no_mangle]`/
-  `extern "C"` only on render clones;
+  derived HIR items, preserves derive attributes, and sanitizes `#[no_mangle]`
+  plus every explicit function ABI only on render clones;
 - the comprehensive fixture has been manually checked against the JSON schema;
   and
 - `cargo fmt`, `cargo clippy --workspace --all-targets`, and

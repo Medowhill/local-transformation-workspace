@@ -14,7 +14,10 @@ Those documents describe the overall research motivation and cross-component int
 Where this document narrows a more general behavior in `research-plan.md` or
 `proctor-spec.md`, this prototype document is normative for the initial
 prototype. `phase-1-test-plan.md` is the exhaustive executable contract for
-Phase 1.
+Phase 1. `phase-2-test-plan.md`, together with the Phase 2 lifetime-generic
+amendment in Section 14.3 and the corresponding update cases in
+`phase-3-test-plan.md`, is the exhaustive executable contract for Phase 2.
+`phase-3-test-plan.md` is the exhaustive executable contract for Phase 3.
 
 Phase 1 was implemented and validated before the Phase 2 design was finalized.
 Phase 2 includes four intentional adjustments to the completed Phase 1
@@ -24,10 +27,31 @@ exclude every free function whose final identifier is `main`; and force the
 supported two-argument `main_0` target `argv` type to
 `&mut [&mut [i8]]`. The implementation agent for Phase 2 must make these
 generator changes and update the existing Phase 1 Rust tests as specified in
-`phase-2-test-plan.md`. Do not edit or reinterpret the historical
-`phase-1-test-plan.md`, and do not otherwise reopen Phase 1 behavior. Moving
-the existing code and tests into the `skeleton` module is an organizational
-refactor, not another Phase 1 semantic change.
+`phase-2-test-plan.md`. During Phase 2, do not edit or reinterpret the
+historical `phase-1-test-plan.md`, and do not otherwise reopen Phase 1
+behavior. Moving the existing code and tests into the `skeleton` module is an
+organizational refactor, not another Phase 1 semantic change. The explicit
+Phase 3 amendments below supersede that completed behavior without rewriting
+the historical plans.
+
+Phase 2 was implemented and validated before the Phase 3 design was finalized.
+Phase 3 adds three intentional amendments to the completed Phase 1/2
+implementation:
+
+- validate the complete function lifetime-generic declaration rather than
+  validating lifetime names only where they occur inside parameter and return
+  types;
+- reject every function-local parsed item statement, including the local
+  `const` and `static` items that Phase 1 and Phase 2 previously handled; and
+- recognize the special zero- and two-argument `main_0` forms using only the
+  final identifier symbol and arity, without inspecting types or bodies.
+
+Sections 5.2, 13.1, 13.4, 14.1, 14.5, and 14.8 are normative for the local-item
+amendment; Section 14.3 is normative for the lifetime amendment; and Sections
+5.2 and 16.4 are normative for arity-only executable recognition. Do not edit
+the historical `phase-1-test-plan.md` or `phase-2-test-plan.md`; the required
+updates to existing Phase 1 and Phase 2 Rust tests and the additional
+regressions are specified in Section 4 of `phase-3-test-plan.md`.
 
 `unsupported.md` is the consolidated conceptual input contract for this
 prototype. Some low-level skeleton and validator behavior deliberately handles
@@ -79,6 +103,8 @@ The prototype assumes the absence of:
 - async functions;
 - source-defined variadic free functions;
 - parameter patterns;
+- a source function carrying both `#[no_mangle]` and
+  `#[export_name = "..."]`;
 - by-reference binding modes (`ref` and `ref mut`) in source patterns, even
   though skeleton generation and structural validation handle them
   mechanically;
@@ -86,26 +112,38 @@ The prototype assumes the absence of:
 - dynamic dispatch;
 - callback patterns through `void *`;
 - macro definitions and item-producing macro invocations;
-- function-body item declarations other than `const` and `static`;
+- a call expression written inside the input token tree of an expression- or
+  statement-position macro invocation;
+- function-body item declarations of every kind, including `const` and
+  `static`;
 - `cfg` attributes;
 - attributes on statements;
 - explicit `unsafe` blocks; and
 - empty statements.
 
-The function-body item restriction applies to parsed item statements
-(`StmtKind::Item`). Function-local `const` and `static` declarations are
-supported. Function-local functions, types, structs, enums, unions, modules,
-traits, impls, foreign blocks, item macros, and every other item kind are
-outside the supported input model. Expression- or statement-position macro
-invocations are not item declarations and remain governed by the existing
-macro and skeleton rules. When a supported local `const` or `static`
-initializer contains a block, its statements and bindings remain part of the
-recursive Phase 1 label tree and target skeleton.
+The function-body item restriction applies recursively to every parsed item
+statement (`StmtKind::Item`), including local `const`, `static`, function,
+type, struct, enum, union, module, trait, impl, foreign, `use`, `extern crate`,
+macro-definition, and item-macro declarations. Phase 1 rejects the enclosing
+transformation target as soon as recursive statement labeling encounters one;
+it does not label the item or traverse its initializer or body. Expression-
+or statement-position macro invocations are not item declarations and remain
+governed by the existing macro and skeleton rules.
 
 C2Rust expands C macros before this stage. `unexpand` may restore surface
 syntax such as derive attributes and expression-position macro invocations.
 Skeleton generation preserves that surface syntax in `annotated_source`; it
 must not expand the source AST again.
+
+Expression- and statement-position macro invocations remain supported only
+when their source token trees contain no call expression. For example,
+`println!("hello")` is supported, while `println!("{}", local_fn())` is not.
+Calls introduced internally by expansion of a macro such as `println!` do not
+violate this source-syntax restriction. Skeleton dependency collection still
+walks expanded HIR and may therefore observe a source call nested inside a
+macro invocation. Phase 3 rewrites the unexpanded surface AST and cannot
+reliably redirect such a call to a temporary wrapper, which is why that source
+form is excluded.
 
 Phase 1 assumes that every HIR item generated by expanding a preserved derive
 attribute is recognized by `TyCtxt::is_automatically_derived`. Derives that
@@ -225,8 +263,8 @@ The consecutive output statements corresponding to one labeled source statement.
 
 Add `crates/tools` as a member of the `crat` Cargo workspace. This library crate
 contains the Rust-aware, in-memory implementation of skeleton generation,
-validation, and, in a later phase, candidate-project generation. It may depend
-on `pointer_replacer`, `utils`, and the rustc-private crates it needs.
+validation, safety normalization, and item replacement. It may depend on
+`pointer_replacer`, `utils`, and the rustc-private crates it needs.
 Add `tools = { path = "crates/tools" }` to the root package dependencies so the
 root binary can call the library; do not place the implementation directly in
 the binary.
@@ -238,7 +276,9 @@ test module. Move the existing skeleton-generation implementation into a
 `skeleton` module and put the structural validator in a separate `validator`
 module so the Phase 1 API remains source-compatible. Keep each module's tests
 beside that module, for example in `skeleton/tests.rs` and
-`validator/tests.rs`.
+`validator/tests.rs`. Phase 3 adds an `item_replacer` module with tests in
+`item_replacer/tests.rs`; the module owns both target-safety normalization and
+validated item replacement.
 
 Add the executable `src/bin/crat-tool.rs` to the root `crat` package. Follow the
 small command-dispatch structure used by `src/bin/crat-finder.rs`: parse
@@ -249,8 +289,9 @@ reads request JSON, calls the parser-only validator, and writes response JSON;
 it does not locate or compile a project. Rust parsing and analysis belong in
 the library, not in the executable.
 
-The prototype requires three logical Crat operations, exposed through
-`crat-tool` subcommands. Phase 1 implements only `make-skeleton`.
+The prototype requires four logical Crat operations, exposed through
+`crat-tool` subcommands. Phase 1 implements `make-skeleton`, Phase 2 adds
+`validate`, and Phase 3 adds `normalize-safety` and `replace`.
 
 ### 4.1 Generate skeletons
 
@@ -328,19 +369,89 @@ Phase 2 tests exercise only in-memory request construction, parsing,
 validation, and response serialization. They do not invoke the CLI or perform
 filesystem I/O.
 
-### 4.3 Create a candidate project
+### 4.3 Normalize target safety
 
-Input:
+Expose the production operation as:
 
-- current Rust project directory path;
-- candidate-project destination path;
-- JSON mapping from full Rust function paths to validated transformed snippets.
+```text
+crat-tool normalize-safety \
+    --output <output.rs> \
+    <input.rs>
+```
 
-Output:
+The command reads one Rust source file and writes one Rust source file. It
+does not read skeleton JSON, copy a Cargo project, or modify any other file.
+Project copying and replacement of the library source belong to the
+orchestrator.
 
-- a complete candidate Rust project containing replacements, wrappers, and rewritten call sites.
+The underlying library operation is parser-only and in-memory:
 
-The Python orchestrator must not parse or rewrite Rust. All Rust-specific processing remains in Crat.
+```rust,ignore
+pub fn normalize_target_safety(
+    source: &str,
+) -> Result<String, ReplacementError>;
+```
+
+It accepts and returns the exact single-file library source text and performs
+no filesystem access. Section 16.1 specifies its complete behavior.
+
+### 4.4 Replace validated items
+
+Expose the production operation as:
+
+```text
+crat-tool replace \
+    --request <request.json> \
+    --output <output.rs> \
+    <current-project>
+```
+
+The versioned request contains an ordered list of replacement item identities
+and the one complete, already validated Rust transformation snippet returned
+for the current SCC. It deliberately does not require Python to split or parse
+that Rust snippet:
+
+```json
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "id": 12,
+      "path": "foo::bar",
+      "name": "bar"
+    }
+  ],
+  "transformation": "unsafe fn bar(...) { ... }"
+}
+```
+
+Phase 3 supports only function entries, but the request and module use item
+terminology because later phases may replace other item kinds. The exact
+schema and setup rules are in Section 16.2.
+
+The production command locates and compiles the current project's one library
+source, calls the in-memory Rust-aware replacement operation, and writes only
+the returned library source to the requested `.rs` output path. It does not
+copy or mutate the current project. The orchestrator copies the current
+project to a fresh destination, overwrites the copied library source with this
+output, builds the copy, and either commits or discards it. The generated
+Cargo bin shim and every other copied file therefore remain orchestrator-owned
+and unchanged by `replace`.
+
+A suitable library API is:
+
+```rust,ignore
+pub fn replace_items(
+    source: &str,
+    request: &ReplacementRequest,
+    tcx: TyCtxt<'_>,
+) -> Result<String, ReplacementError>;
+```
+
+The library receives no project path, destination path, reader, or writer.
+The Python orchestrator must not parse or rewrite Rust. All Rust-specific
+matching, label removal, header composition, wrapper generation, call
+resolution, and source rewriting remain in Crat.
 
 ## 5. Skeleton generation
 
@@ -427,12 +538,11 @@ The target skeleton:
 The all-bindings-mutable rule applies recursively to every binding pattern in
 the target skeleton, including function parameters, simple and destructuring
 `let` patterns, `let-else` patterns, `if let` and `while let` patterns, `for`
-patterns, `match`-arm patterns, and bindings nested inside supported
-function-local `const`/`static` initializer blocks. Wildcards do not introduce
-bindings. A by-reference binding keeps its by-reference mode and becomes
-`ref mut`. `annotated_source` and `source_signature` retain the source
-mutability exactly; only `annotated_skeleton` and `target_signature` receive
-the permissive mutability update.
+patterns, and `match`-arm patterns. Wildcards do not introduce bindings. A
+by-reference binding keeps its by-reference mode and becomes `ref mut`.
+`annotated_source` and `source_signature` retain the source mutability
+exactly; only `annotated_skeleton` and `target_signature` receive the
+permissive mutability update.
 
 Function safety follows the same source/target separation. Preserve whether
 the source function is safe or unsafe in `annotated_source` and
@@ -450,8 +560,10 @@ dependency lists and the function graph. `main_0` remains an ordinary
 transformation target.
 
 Apply one special target-signature override to a function whose final
-identifier is `main_0` and whose source parameter and return types are
-structurally exactly:
+identifier's symbol is `main_0` and whose arity is two. Recognition checks
+only this name and arity. It does not inspect source safety, parameter names or
+types, return type, visibility, ABI, attributes, or body. The supported-input
+contract guarantees the following source form:
 
 ```rust,ignore
 unsafe fn main_0(
@@ -470,13 +582,13 @@ unsafe fn main_0(
 ) -> core::ffi::c_int
 ```
 
-Visibility and binding `mut` do not affect recognition; the supported
-executable form itself is unsafe. The actual target rendering also applies the
-all-bindings-mutable rule to both parameter patterns. The `argv` override takes
-precedence over the ordinary pointer-analysis decision, including a
-raw-pointer decision. It does not change `argc`, the return type, or
-pointer-analysis behavior for any other function or binding. A zero-argument
-`main_0` uses ordinary target-type decisions.
+The actual target rendering also applies the all-bindings-mutable rule to both
+parameter patterns. The `argv` override takes precedence over the ordinary
+pointer-analysis decision, including a raw-pointer decision. It does not
+change the first parameter, the return type, or pointer-analysis behavior for
+any other function or binding. A function named `main_0` with arity zero uses
+ordinary target-type decisions. Any other `main_0` arity is outside the
+supported executable model and receives no special override.
 
 This mutation is intentional: the target skeleton must not prevent an LLM from
 assigning to an existing binding while translating a pointer operation.
@@ -485,13 +597,13 @@ ignores binding mutability everywhere and accepts either the presence or
 absence of `mut` in the returned transformation. It still enforces binding
 identity, declaration placement, and target types.
 
-Supported function-local `const` and `static` items are an exception to the
-ordinary expression-hole and inferred-local-type rules. Preserve each complete
-item and initializer expression tree, while recursively attaching the normal
-statement labels and applying only the all-bindings-mutable update inside
-initializer blocks. Do not materialize new explicit types for bindings inside
-an item initializer. This is the item-preservation behavior validated in
-Section 13.1, not an additional Phase 1 semantic change.
+Before attaching a label to a statement, recursively reject every
+`StmtKind::Item` with `GenerationErrorKind::FunctionLocalItem`; the error
+identifies the enclosing function path and observed item kind. This includes
+local `const` and `static` declarations and items nested at any supported
+statement-list depth. Do not label the rejected item or visit its initializer
+or body. The excluded `main` remains uninspected because it is omitted before
+function-body labeling.
 
 Control structures are preserved at any nesting depth in the statement/control
 tree, including their branch, body, pattern, and nested-statement layout. A
@@ -772,10 +884,12 @@ It is responsible for:
 - calling the LLM through LiteLLM;
 - extracting Rust code from responses;
 - invoking Crat validation;
-- invoking Crat candidate-project generation;
+- invoking Crat item replacement to produce one Rust source file;
+- copying the current project and overwriting only its library source with
+  Crat's output;
 - running `cargo build`;
 - managing repair attempts;
-- promoting successful candidate projects.
+- promoting successful replacement projects.
 
 It must not parse Rust source.
 
@@ -946,23 +1060,20 @@ Implement every function in the Transformation Targets section.
 Requirements:
 
 1. Preserve the exact behavior of the source code.
-2. Strictly follow the parameter types, return type, and local-variable types
-   fixed by the target skeleton. The skeleton deliberately marks every binding
-   `mut`; you may keep or remove `mut` as needed because binding mutability is
-   not validated.
+2. Strictly follow the lifetime-generic declaration, parameter types, return
+   type, and local-variable types fixed by the target skeleton. The skeleton
+   deliberately marks every binding `mut`; you may keep or remove `mut` as
+   needed because binding mutability is not validated.
 3. Call transformed function dependencies using their target signatures.
-4. Do not change any existing function name, parameter name, local-binding name,
-   or item name. Preserve each existing declaration exactly once in its
-   original label and branch, arm, loop, or block role. Preserve every existing
-   function-local `const` or `static` declaration exactly, including its
-   attributes, type, `static mut` status, and initializer, apart from the
-   permitted binding-`mut` differences described above.
+4. Do not change any existing function name, parameter name, or local-binding
+   name. Preserve each existing declaration exactly once in its original label
+   and branch, arm, loop, or block role.
 5. New local bindings may be introduced only with names of the form
    `proctor_temp_var_n`, where `n` is a nonnegative integer.
 6. A new temporary binding may be used only within the labeled expansion group
    in which it is declared, including unlabeled nested code inside that group.
-7. Do not define additional functions, types, statics, constants, modules, or
-   other items.
+7. Do not define functions, types, statics, constants, modules, or any other
+   item inside a transformation target.
 8. Every source statement label must appear at least once in the output.
 9. A source statement may expand into one or more consecutive sibling statements
    with the same label.
@@ -1335,8 +1446,7 @@ a function-wide set of spellings:
 
 - function names;
 - parameter names;
-- existing local-binding names;
-- existing item names.
+- existing local-binding names.
 
 Every parameter remains in its original parameter position. Every local or
 pattern binding remains declared exactly once in the same expansion group and
@@ -1379,29 +1489,9 @@ differ.
 
 An existing declaration may not be deleted, duplicated, moved to another
 label, moved to another branch or arm, or replaced by a generated temporary.
-The only supported existing function-local items are `const` and `static`.
-Each remains exactly once in its original expansion group and structural
-position. Before item-structure comparison, recursively remove only
-`#[proctor(N)]` attributes from both compared items because label syntax and
-placement are validated separately. Then, ignoring spans, node IDs, token
-caches, and formatting, require the complete parsed AST to equal the target
-skeleton: item kind, name, visibility, every non-`proctor` attribute, declared
-type, `static mut` status, and initializer are all exact. The sole comparison
-normalization is the global binding-mutability exception: `mut` may differ on
-binding patterns inside a const/static initializer, but `static mut` may not
-differ because it is item mutability. No new nested item of any kind may be
-introduced. Exact initializer structure overrides the general expansion
-permission for labels nested inside that initializer: those nested statements
-remain one-for-one and structurally exact apart from binding `mut`. The outer
-item statement remains an ordinary expansion-group member, so additional
-non-item siblings with its label are governed by the normal expansion and
-generated-binding rules.
-
-Associate an expected local item by its complete Rust identifier before
-comparing location and structure. A unique same-named item with the wrong
-`const`/`static` kind is `existing_item_structure_mismatch`, not a
-missing-plus-unexpected pair. A renamed item has no matching identity and is
-reported as the expected item missing plus the result-only item unexpected.
+Function-local parsed items are not existing declarations in supported target
+skeletons: Phase 1 rejects them before producing a record, and Phase 2 rejects
+them in both expected skeletons and returned transformations.
 
 For every existing local declaration, preserve whether an explicit type is
 present. If present, its result type must structurally equal the target
@@ -1485,16 +1575,13 @@ This restriction keeps each labeled expansion syntactically local and suitable f
 
 ### 13.4 Attributes
 
-Apart from attributes already present on a supported function-local `const` or
-`static` item, the target skeleton contains only statement-root
-`#[proctor(N)]` attributes in function bodies. A result may not introduce any
-other statement or expression attribute, and a `proctor` attribute may not
-appear anywhere except the root attribute storage of a statement in an
-expansion group. Existing non-`proctor` attributes on a local `const` or
-`static` are item structure and must remain exact under Section 13.1; adding,
-removing, or changing one produces `existing_item_structure_mismatch`, not
-`unexpected_body_attribute`. Function-header attributes are ignored because
-candidate generation discards the LLM header.
+The target skeleton contains only statement-root `#[proctor(N)]` attributes
+in function bodies. A result may not introduce any other statement or
+expression attribute, and a `proctor` attribute may not appear anywhere
+except the root attribute storage of a statement in an expansion group.
+Function-header attributes are ignored because item replacement preserves the
+current project's attributes instead of accepting attributes from the LLM
+header.
 
 ## 14. Crat validator
 
@@ -1564,17 +1651,22 @@ Before inspecting an LLM result, require:
 - a supported target signature in each skeleton;
 - well-formed, unique numeric statement labels;
 - a valid Phase 1 control/statement tree;
-- no function-local item declaration other than `const` or `static`; and
+- no function-local item declaration of any kind; and
 - no conflict between request metadata and parsed skeletons.
 
 Report the first setup error in deterministic check order. Setup errors abort
 result validation because any result diagnostics would be untrustworthy. A
 prohibited function-local item in an expected skeleton is
 `invalid_expected_skeleton`; the message identifies the function, label when
-available, observed item kind, and the `const`/`static`-only restriction. This
-is a Phase 2 setup check over Phase 1 output, not another Phase 1 generator
-change. Scan item statements recursively at every supported statement-list
-depth, including blocks inside supported local-item initializers.
+available, and observed item kind. Scan item statements recursively at every
+supported statement-list depth. This setup check defends the Phase 1/2
+boundary even though the amended Phase 1 generator no longer emits such a
+skeleton.
+
+A supported expected-skeleton signature may contain only named lifetime
+parameters without attributes or bounds and may not contain a syntactically
+present `where` clause, even an empty one. Phase 1 never generates those
+constructs.
 
 ### 14.2 Whole-snippet checks
 
@@ -1596,10 +1688,21 @@ fails, return one global failure and suppress per-function checks.
 For each generated function, validate:
 
 - function name;
+- complete lifetime-generic declaration;
 - parameter count;
 - parameter names;
 - parameter types;
 - return type.
+
+The generated function must declare exactly the same lifetime parameters as
+the target skeleton, in the same order and with the same names. Every generic
+parameter must be a lifetime parameter. Added lifetime bounds, type
+parameters, and const parameters are rejected. A lifetime parameter may not
+carry an attribute, and any syntactically present `where` clause is rejected,
+including an empty one. Any difference in this declaration produces one
+`generic_parameter_mismatch` for the function. Its message shows the expected
+and observed declarations and instructs the LLM to copy the target skeleton's
+complete lifetime-generic declaration.
 
 Compare parsed types structurally, not textually. Ignore source spans, node
 IDs, token caches, formatting, and redundant parentheses. Otherwise require
@@ -1617,7 +1720,7 @@ The prototype excludes:
   generated lifetime parameters remain supported;
 - async functions.
 
-Crat does not need to validate the generated function's:
+Crat does not validate the generated function's:
 
 - visibility;
 - ABI;
@@ -1625,12 +1728,14 @@ Crat does not need to validate the generated function's:
 - `const` qualifier; or
 - binding mutability in parameters.
 
-The validator does not separately compare the function generic-parameter
-declaration because candidate generation replaces the complete header.
-Explicit lifetime names appearing inside parameter and return types are still
-part of structural type comparison.
+Explicit lifetime names appearing inside parameter and return types remain
+part of structural type comparison independently of the complete
+lifetime-generic declaration check.
 
-During replacement, Crat discards those header properties from the LLM result and emits its own exact target header.
+During replacement, Crat uses the validated lifetime-generic declaration,
+parameter patterns and types, return type, and body. It ignores the LLM
+function's visibility, ABI, safety, `const` qualifier, and attributes, composing
+those properties from the current project as specified in Section 16.3.
 
 ### 14.4 Binding-type checks
 
@@ -1658,8 +1763,7 @@ Validate all rules in Sections 12 and 13, including:
 - target local-variable types;
 - temporary-variable naming and locality;
 - prohibition of generated temporaries inside macro token trees;
-- exact preservation of existing function-local `const` and `static` items;
-- prohibition of every new function-local item;
+- prohibition of every function-local item;
 - prohibition of new statement/expression attributes; and
 - prohibition of explicit unsafe blocks.
 
@@ -1762,8 +1866,10 @@ Repeated validation of the same bytes must produce byte-identical JSON.
 
 The validator uses stable machine-readable codes and detailed human-readable
 messages. The exhaustive initial code set and precedence expectations are
-fixed by `phase-2-test-plan.md`; later regressions may add codes but may not
-repurpose an existing code.
+fixed by `phase-2-test-plan.md`, as explicitly amended by Section 4 of
+`phase-3-test-plan.md`: add `generic_parameter_mismatch` and remove the four
+obsolete existing-item codes listed in Section 14.8. No remaining code is
+repurposed.
 
 ### 14.7 Exit behavior
 
@@ -1822,8 +1928,8 @@ Use the following same-category precedence and suppression rules:
 
 | Area | Precedence and suppression |
 | --- | --- |
-| Signature | Parameter count; parameter names in parameter order; parameter types in parameter order; return type. A count mismatch suppresses name/type checks for parameter positions that cannot be paired, but not checks for safely paired positions or the return type. |
-| Existing declarations | For each target declaration in structural preorder, first associate by declaration identity and structural position. One occurrence in a wrong position produces only the applicable location-mismatch error. No occurrence produces `missing_*`; multiple occurrences produce `duplicate_*`. For a uniquely associated binding, compare by-value/`ref` mode before explicit-type presence and type. Compare the complete structure of a uniquely associated local `const` or `static` after location association. After expected declarations, report result-only bindings/items in result source order. |
+| Signature | Lifetime-generic declaration; parameter count; parameter names in parameter order; parameter types in parameter order; return type. A generic-declaration mismatch is one `generic_parameter_mismatch` and does not suppress parameter or return checks. A count mismatch suppresses name/type checks for parameter positions that cannot be paired, but not checks for safely paired positions or the return type. |
+| Existing declarations | For each target binding in structural preorder, first associate by declaration identity and structural position. One occurrence in a wrong position produces only the applicable location-mismatch error. No occurrence produces `missing_existing_binding`; multiple occurrences produce `duplicate_existing_binding`. For a uniquely associated binding, compare by-value/`ref` mode before explicit-type presence and type. After expected bindings, report result-only bindings and any prohibited function-local items in result source order. |
 | Label syntax and placement | Report malformed or misplaced `proctor` attributes in result source order before sequence diagnostics. A malformed attribute occupying an expected group position suppresses a derivative `missing_label` there. A misplaced attribute does not create a statement label. |
 | Label sequence | After well-formed root labels are collected, report nested repetition, then nonconsecutive reappearance, then order mismatch, then missing expected labels in target preorder, unexpected labels in result source order, and unlabeled sibling statements in result source order. Do not report `label_order_mismatch` for a sequence already explained by `nonconsecutive_label`. |
 | Controls and descendants | Validate the parent control kind, statement role, branch/arm shape, and required control-root count before descendant placement. A parent failure suppresses descendant label, declaration, type, and temporary-locality errors only beneath the unreliable role. With a valid parent, a label found in the wrong branch, arm, or structural statement list produces `descendant_location_mismatch`, not a missing-plus-unexpected-label pair. |
@@ -1834,13 +1940,14 @@ For a required control group, zero control roots is
 `missing_control_root` and more than one is `multiple_control_roots`. A value
 path whose complete local identifier matches `proctor_temp_var_n` but resolves
 to neither an expected existing local nor a declared generated temporary is
-`unresolved_generated_temporary`. Existing nested items use
-`duplicate_existing_item` when repeated and
-`existing_item_location_mismatch` when a unique occurrence is in the wrong
-expansion group or structural role. These association errors suppress
-derivative missing/unexpected errors for the same identity. A uniquely
-associated local `const` or `static` whose parsed structure differs uses
-`existing_item_structure_mismatch`.
+`unresolved_generated_temporary`. Any function-local `StmtKind::Item` in a
+returned transformation uses `unexpected_nested_item`; there is no expected
+local-item association or structure comparison. Report the item once and do
+not descend into its initializer or body for derivative label, binding,
+temporary, attribute, or unsafe-block diagnostics. The obsolete
+`missing_existing_item`, `duplicate_existing_item`,
+`existing_item_location_mismatch`, and `existing_item_structure_mismatch`
+codes are removed.
 
 A full path is not required in validation output. The orchestrator can obtain
 it from the skeleton JSON.
@@ -1852,34 +1959,58 @@ Each SCC is all-or-nothing.
 No function in the SCC is committed until:
 
 1. every function passes Crat structural validation; and
-2. the complete candidate project passes `cargo build`.
+2. the complete replacement project passes `cargo build`.
 
 If either step fails:
 
-- discard the entire candidate;
+- discard the entire replacement project;
 - discard partial success within the SCC;
 - regenerate every function in the SCC.
 
-## 16. Candidate-project generation
+## 16. Item replacement and integration
 
 ### 16.1 One-time target-safety normalization
 
-Phase 3 provides a Rust project-rewrite operation that Phase 4 invokes once,
+Phase 3 provides a pure source-to-source operation that Phase 4 invokes once,
 after skeleton generation and before processing the first SCC. It receives the
-original project, a fresh destination, and the full paths of all `Fn` records
-in the immutable skeleton JSON. It copies the project and mechanically changes
-every listed function header to `unsafe fn` in one global operation.
+original single-file library source and mechanically changes every
+source-defined free-function header except `main` to `unsafe fn` in one global
+operation. It does not consume skeleton JSON or a target-path list.
 
-This normalization:
+The in-memory operation:
+
+```rust,ignore
+pub fn normalize_target_safety(
+    source: &str,
+) -> Result<String, ReplacementError>;
+```
+
+recursively traverses the unexpanded surface AST through inline modules and
+changes every body-bearing free `ItemKind::Fn` whose final identifier symbol
+is not `main`. The name comparison therefore also excludes a surface spelling
+of `r#main`. It does not inspect function paths, parameter types, return type,
+body, visibility, ABI, attributes, `const`, async, or variadic qualifiers.
+Those unsupported forms remain preconditions of the supported-input contract,
+not normalization errors. Foreign declarations are not body-bearing free
+items and remain unchanged.
+
+Normalization:
 
 - occurs after skeleton generation so `annotated_source` and
   `source_signature` still record original source safety;
-- changes only the safety qualifier of transformation targets;
+- inserts `unsafe` only when it is absent and is idempotent for an already
+  unsafe target;
+- changes only the safety qualifier of every source-defined free function
+  except `main`;
 - leaves every excluded `main`, foreign declaration, context item, function
   body, type, ABI, visibility, attribute, and generated Cargo bin source
-  unchanged;
-- creates no wrapper merely for a safe-to-unsafe normalization; and
-- produces the initial current project from which SCC candidates are copied.
+  unchanged; and
+- creates no wrapper merely for a safe-to-unsafe normalization.
+
+The production command writes only this returned source to its requested
+`.rs` output path. The orchestrator copies the original project, overwrites
+the copied library source with that file, and builds the resulting normalized
+initial current project.
 
 Normalizing every target before the first callee-first SCC replacement is
 required for incremental compilation. Otherwise, replacing a safe callee with
@@ -1888,52 +2019,197 @@ targets are unsafe, calls among still-untransformed and transformed targets may
 occur directly inside unsafe functions. Phase 4 runs `cargo build` on this
 normalized initial current project before beginning SCC processing.
 
-### 16.2 Per-SCC candidate insertion
+### 16.2 Versioned replacement request
 
-After structural validation succeeds, the orchestrator calls Crat with:
+After structural validation succeeds, the orchestrator passes Crat the current
+single-file library source and this typed request:
 
-- current Rust project directory path;
-- fresh candidate-project destination path;
-- JSON mapping from full Rust function paths to transformed snippets.
+```rust,ignore
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplacementRequest {
+    pub schema_version: u64,
+    pub items: Vec<ReplacementItem>,
+    pub transformation: String,
+}
 
-Example:
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplacementItem {
+    pub id: u64,
+    pub path: String,
+    pub name: String,
+}
+
+pub fn replacement_request_from_json(
+    input: &str,
+) -> Result<ReplacementRequest, ReplacementError>;
+```
+
+Its exact JSON form is:
 
 ```json
 {
-  "foo::bar": "unsafe fn bar(...) { ... }",
-  "foo::baz": "unsafe fn baz(...) { ... }"
+  "schema_version": 1,
+  "items": [
+    {
+      "id": 12,
+      "path": "foo::bar",
+      "name": "bar"
+    }
+  ],
+  "transformation": "unsafe fn bar(...) { ... }"
 }
 ```
 
-Crat then:
+`schema_version` and every `id` are JSON integers in the Rust `u64` range.
+Version `1` is the only supported version. Reject unknown fields, an empty
+`items` list, duplicate IDs, duplicate paths, duplicate names, empty paths,
+and disagreement between `path`'s final identifier and `name`. Both fields use
+the immutable skeleton's exact identifier spelling, including `r#` prefixes.
+The transformation must parse as a crate containing exactly one top-level free
+function for every requested name, with no duplicate, missing, or additional
+function and no other top-level item. The request order is the stable
+diagnostic and replacement order; transformation function order is irrelevant.
+These checks are defensive integration checks even though the transformation
+has already passed the Phase 2 validator.
 
-1. Copies the current project into the candidate destination.
-2. Parses each transformed function.
-3. Removes all `#[proctor(...)]` labels.
-4. Replaces each original SCC function.
-5. Uses Crat's exact unsafe target signature rather than trusting the LLM
-   header.
-6. Creates wrappers when source and target parameter or return types differ,
-   except for the forced two-argument `main_0` conversion.
-7. Rewrites calls from external untransformed callers.
-8. Applies the special executable-`main` migration below when the SCC contains
-   the supported two-argument `main_0`.
-9. Writes the complete candidate project.
+The pure JSON parser performs no I/O and reports malformed JSON, unknown
+fields, invalid integer representations, and request-metadata violations as
+`InvalidRequest`. Phase 3 tests call it directly; the CLI uses the same parser.
 
-The current project is never modified in place.
+Phase 3 replaces only functions, while `ReplacementRequest`,
+`ReplacementItem`, the `item_replacer` module, and `replace_items` use item
+terminology so that later phases can extend the operation without renaming its
+public surface. The in-memory API is:
 
-### 16.3 Executable `main_0` migration
+```rust,ignore
+pub fn replace_items(
+    source: &str,
+    request: &ReplacementRequest,
+    tcx: TyCtxt<'_>,
+) -> Result<String, ReplacementError>;
+```
+
+`tcx` must have been created by compiling exactly `source`; it is used for
+full-path identity and call-target resolution. The operation performs no
+filesystem I/O. Use this deliberately small debugging-oriented taxonomy:
+
+```rust,ignore
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplacementErrorKind {
+    InvalidRequest,
+    InvalidTransformation,
+    TargetResolution,
+    UnsupportedConversion,
+    UnsupportedCallRewrite,
+    RewriteFailure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplacementError {
+    pub kind: ReplacementErrorKind,
+    pub item: Option<ReplacementItem>,
+    pub message: String,
+}
+```
+
+The item field supplies the requested ID/path/name when one item is
+responsible, and the message describes the concrete failure. Do not add
+fine-grained stable subcodes or a validator-style total error precedence:
+replacement errors are unexpected integration/debugging failures and are not
+sent to the LLM for repair. Return the first failure found by the deterministic
+request checks and atomic algorithm documented here, iterating requested items
+in request order. The production `replace` command exits nonzero and does not
+write a usable output source file. These errors are not Phase 2 LLM-validation
+failures and do not use the validator response schema. An incompilable but
+successfully emitted replacement is instead handled by the ordinary
+compiler-diagnostic LLM repair loop.
+
+### 16.3 Atomic replacement algorithm
+
+Resolve and validate the complete transaction against the unchanged current
+source before mutating its AST:
+
+1. Parse the unexpanded surface source and recursively map its items and
+   expressions to the HIR compiled in `tcx`, using the same unexpanded
+   `AstToHirMapper` discipline as skeleton generation and skipping
+   automatically derived HIR items.
+2. Resolve every requested full path to exactly one current source-defined
+   free function. Require its final name to match the request, require it to be
+   already `unsafe`, and reject `const`, async, and variadic functions or a
+   function carrying both `#[no_mangle]` and `#[export_name = "..."]`.
+3. Match every parsed transformation function by name. Recheck the supported
+   lifetime-only generic form, plain identifier parameters, parameter count
+   and names, and nonvariadic, nonasync form expected from validation.
+4. Compare each current parameter and return type to its transformation
+   counterpart to decide whether a compatibility wrapper is required. Use the
+   same structural type normalization as the Phase 2 validator: ignore spans,
+   node IDs, token caches, formatting, and redundant parentheses, but not real
+   type structure. Parameter binding mutability does not cause a wrapper.
+   Before conversion validation, identify the executable exemption solely by
+   the requested function's final identifier symbol `main_0` and arity: arity
+   zero leaves the sibling `main` unchanged, while arity two receives the
+   explicit no-wrapper migration. Do not inspect parameter types, return type,
+   safety, visibility, ABI, attributes, or body to classify these two forms.
+5. Allocate all required same-module wrapper names and validate every required
+   source/target conversion before emitting or changing any AST node.
+6. Resolve every current direct call expression against HIR and snapshot which
+   calls target a requested function. Calls inside requested SCC functions are
+   not redirected. If an external call that requires redirection originates
+   inside a source macro invocation's token input, return an error because the
+   unexpanded surface AST cannot rewrite it reliably.
+7. Rewrite the snapshotted external calls that require a wrapper, replace all
+   requested functions, insert all wrappers, and perform the executable
+   `main_0` migration when applicable.
+8. Pretty-print the complete crate and return it only after the whole
+   transaction succeeds.
+
+This ordering prevents the generated wrapper's own call to the transformed
+implementation from being mistaken for an external source call. Any error
+leaves the caller's source string untouched and returns no partial output.
+Previously inserted same-module wrappers are ordinary preserved items; a
+later SCC transaction does not reconstruct or delete them.
+
+For each requested function, compose the transformed implementation as
+follows:
+
+- preserve the current function's attributes except for ABI/export movement
+  required by a wrapper;
+- preserve its visibility and already-normalized `unsafe` qualifier;
+- ignore the transformation function's attributes, visibility, ABI, safety,
+  and `const` qualifier;
+- take the validated lifetime-generic declaration, parameter patterns and
+  types, return type, and body from the transformation;
+- remove every validated `#[proctor(N)]` statement label recursively from the
+  replacement body; and
+- preserve no label in the emitted implementation or wrapper.
+
+When no wrapper is required, preserve the current ABI, `#[no_mangle]`,
+`#[export_name = ...]`, and all other current function attributes on the
+implementation. When a wrapper is required, Section 17.3 defines the only ABI
+and export-attribute movement. This header composition deliberately preserves
+the original Rust API visibility and the Phase 3 safety normalization while
+using the exact signature already checked by Phase 2. It does not copy a
+complete LLM-written function item into the project.
+
+### 16.4 Executable `main_0` migration
 
 The excluded safe library `main` is not an LLM transformation target. When an
-SCC containing the supported zero-argument `main_0` is inserted, leave
-`main` unchanged: it already calls an unsafe `main_0` inside its existing
-unsafe block.
+SCC target's final identifier symbol is `main_0`, classify it using only its
+arity. At arity zero, leave the co-located sibling item whose final identifier
+symbol is `main` unchanged: it already calls an unsafe `main_0` inside its
+existing unsafe block.
 
-When an SCC containing the supported two-argument `main_0` is inserted,
-replace the excluded `main` mechanically in the same candidate transaction.
+At arity two, replace that co-located sibling `main` mechanically in the same
+replacement transaction.
 Do not generate a compatibility wrapper for the forced `main_0` `argv`
 conversion: the supported `main` is migrated directly, and another
 untransformed caller of this `main_0` form is unsupported.
+Do not inspect either function's parameter types, return type, safety,
+visibility, ABI, attributes, or body when recognizing the pair. The
+supported-input model guarantees the two exact source forms in Section 2.1.
+Any other `main_0` arity is unsupported and receives no executable migration.
 Use this fixed function:
 
 ```rust
@@ -1987,99 +2263,180 @@ Create a wrapper only when a function's source and target parameter or return
 types differ. Source-safe versus target-unsafe normalization alone never
 creates a wrapper. The forced two-argument `main_0` conversion is also exempt:
 its only supported caller, the excluded `main`, is replaced directly as
-specified in Section 16.3.
+specified in Section 16.4.
 
 The transformed implementation:
 
 - remains at the original Rust path;
-- uses the unsafe target signature.
+- preserves the original visibility and already-normalized `unsafe` qualifier;
+- uses the validated target lifetime-generic declaration, parameters, and
+  return type; and
+- uses Rust's default ABI when a wrapper is required.
 
 The wrapper:
 
-- uses the source parameter and return types and any required source ABI/export
-  surface, but is itself unsafe;
-- delegates to the transformed implementation;
+- is inserted as a sibling in exactly the same module as the transformed
+  implementation;
+- preserves the implementation's original visibility;
+- is always unsafe;
+- uses the source parameter and return types and the source ABI;
+- delegates to the transformed implementation through its absolute path, such
+  as `crate::foo::bar(...)`, rather than an unqualified call that a wrapper
+  parameter could shadow;
 - is an intentionally unsafe compatibility boundary.
 
-Every generated wrapper and transformed implementation is `unsafe fn`,
-regardless of source safety or the LLM-returned qualifier. They may be made
-`pub` as needed to avoid privacy problems. The excluded executable `main` is
-the deliberate safe exception.
+The implementation and wrapper therefore do not widen a private,
+`pub(super)`, or `pub(crate)` Rust API. Any caller that could access the
+original function can access its sibling wrapper through the same module
+boundary. The wrapper is unsafe even if the original function was safe,
+because normalization has already made all transformation targets and their
+untransformed Rust callers unsafe. The excluded executable `main` is the
+deliberate safe exception.
 
-### 17.2 Wrapper module
+### 17.2 Same-module wrapper name
 
-For:
-
-```text
-foo::bar
-```
-
-generate the wrapper at:
+The base wrapper identifier is:
 
 ```text
-crate::proctor_translation_wrapper::foo::bar
+__proctor_wrapper_<original-final-identifier>
 ```
 
-The wrapper module mirrors the original module hierarchy.
+For example, a transformed `foo::bar` receives a sibling whose absolute path
+begins as:
 
-For this prototype, assume that `proctor_translation_wrapper` does not conflict with the source crate.
+```text
+crate::foo::__proctor_wrapper_bar
+```
 
-Do not traverse the generated wrapper module during later call-site rewriting.
-
-When adding wrappers for a new SCC, preserve wrappers created for earlier SCCs.
+Treat the name of every sibling item as occupied, regardless of Rust namespace.
+If the base identifier is occupied, try `<base>_0`, then `<base>_1`, and so on,
+selecting the first identifier not occupied or reserved in that module.
+Allocate names in replacement-request order against the complete unchanged
+module and names already reserved by the same transaction, so multiple
+wrappers added together cannot collide. Raw source identifiers use their
+identifier symbol when forming the base. When adding wrappers for a new SCC,
+preserve wrappers created for earlier SCCs.
 
 ### 17.3 Export handling
 
-For a signature-changing externally exported function:
+When no wrapper is required, the implementation preserves its current ABI and
+all current export attributes.
 
-- remove `#[no_mangle]` from the transformed implementation;
-- give the wrapper the source signature;
-- preserve the source ABI on the wrapper;
-- add `#[no_mangle]` to the wrapper.
+When a wrapper is required:
 
-If a function's signature does not change, preserve any required export attributes on the original function.
+- remove the explicit source ABI from the transformed implementation so it
+  uses Rust's default ABI;
+- apply that exact source ABI to the wrapper;
+- remove `#[no_mangle]` and `#[export_name = ...]` from the implementation;
+- if the source had `#[no_mangle]`, add
+  `#[export_name = "<original-final-identifier>"]` to the differently named
+  wrapper so the external symbol remains exact; and
+- if the source had `#[export_name = "..."]`, move that exact attribute to the
+  wrapper.
+
+A source function carrying both `#[no_mangle]` and `#[export_name = "..."]` is
+unsupported. Reject it before replacement rather than choosing one attribute
+or emitting two wrapper export names.
+
+All other current attributes remain on the transformed implementation and are
+not copied to the wrapper. The transformation function's ABI and attributes
+are ignored. These rules preserve an explicit ABI even when there is no export
+attribute, because the wrapper is the compatibility entry point whenever the
+Rust parameter or return types change.
 
 The prototype considers only executable and `cdylib` targets.
 
 ### 17.4 Conversion logic
 
-Follow Crat's existing wrapper-conversion logic as much as possible.
+For each wrapper parameter, convert the source-signature value into the target
+type independently. Let `p` be the wrapper parameter and `T` the pointee type:
 
-The prototype may use its current unsafe conversions for:
+| Target parameter type | Source raw-pointer conversion |
+| --- | --- |
+| `&T` | `&*(p as *const T)` |
+| `&mut T` | `&mut *(p as *mut T)` |
+| `Option<&T>` | `(p as *const T).as_ref()` |
+| `Option<&mut T>` | `(p as *mut T).as_mut()` |
+| `&[T]` | if `p.is_null()`, `&[]`; otherwise `std::slice::from_raw_parts(p as *const T, 1_000_000)` |
+| `&mut [T]` | if `p.is_null()`, `&mut []`; otherwise `std::slice::from_raw_parts_mut(p as *mut T, 1_000_000)` |
+| `Box<T>` | `Box::from_raw(p as *mut T)` |
+| `Option<Box<T>>` | if `p.is_null()`, `None`; otherwise `Some(Box::from_raw(p as *mut T))` |
+| raw pointer | preserve it when structurally equal, or cast to the exact target raw-pointer type |
 
-- references;
-- optional references;
-- slices;
-- optional slices;
-- boxes;
-- optional boxes;
-- boxed slices;
-- optional boxed slices.
+An input conversion to `Box<[T]>` or `Option<Box<[T]>>` is unsupported in
+Phase 3 and fails the complete replacement transaction before any output is
+emitted. A nonpointer parameter whose source and target types are structurally
+equal is passed through unchanged. Any other source/target pair is an
+unsupported conversion.
 
-This includes the existing provisional slice-bound strategy.
+The wrapper calls the implementation once. If the target function returns a
+value, bind that call result once before converting it to the source return
+type. Let `value` be that single target result:
 
-These wrappers are intentionally unsafe and assume valid caller behavior.
+| Target return type | Source raw-pointer conversion |
+| --- | --- |
+| `&T` | first cast `value` to `*const T`, then cast that raw pointer to the exact source raw-pointer type |
+| `&mut T` | first cast `value` to `*mut T`, then cast that raw pointer to the exact source raw-pointer type |
+| `Option<&T>` | `None` becomes a typed null matching the exact source pointer mutability; `Some(value)` first casts the reference to `*const T`, then to the exact source type |
+| `Option<&mut T>` | `None` becomes a typed null matching the exact source pointer mutability; `Some(value)` first casts the reference to `*mut T`, then to the exact source type |
+| `&[T]` | if empty, return a typed null matching the exact source pointer mutability; otherwise cast `value.as_ptr()` to the exact source type |
+| `&mut [T]` | if empty, return a typed null matching the exact source pointer mutability; otherwise cast `value.as_mut_ptr()` to the exact source type |
+| `Box<T>` | cast the `*mut T` from `Box::into_raw(value)` to the exact source type |
+| `Option<Box<T>>` | `None` becomes a typed null matching the exact source pointer mutability; `Some(value)` casts the `*mut T` from `Box::into_raw(value)` to the exact source type |
+| `Box<[T]>` | if empty, drop the box and return a typed null matching the exact source pointer mutability; otherwise cast the `*mut T` from `Box::leak(value).as_mut_ptr()` to the exact source type |
+| `Option<Box<[T]>>` | `None` and `Some(empty)` return a typed null matching the exact source pointer mutability, dropping an empty box; `Some(nonempty)` casts the `*mut T` from `Box::leak(value).as_mut_ptr()` to the exact source type |
+| raw pointer | preserve it when structurally equal, or cast to the exact source raw-pointer type |
+
+Every null branch uses `std::ptr::null()` for an exact `*const T` source return
+and `std::ptr::null_mut()` for an exact `*mut T` source return, followed by a
+cast when needed to reproduce the exact source spelling/type. Do not cast a
+shared reference directly to `*mut T`: first obtain `*const T` and then cast
+the raw pointer. Likewise, first obtain `*mut T` from a mutable reference,
+mutable slice, or box before any cast to an exact `*const T` source return. A
+nonpointer return whose source and target types are structurally equal passes
+through unchanged. Any other pair is unsupported. The unit return requires no
+temporary.
+
+These conversions are deliberately unchecked. In particular, nonoptional
+references and `Box<T>` do not test nullity; their callers must satisfy Rust's
+nonnull, validity, ownership, and aliasing contracts. A null slice input maps
+to an empty slice, and an empty slice-like return maps to null. The fixed
+provisional slice bound is exactly `1_000_000`. Phase 3 does not introduce
+`Option<&[T]>` or `Option<&mut [T]>`; distinguishing nullable slices is
+deferred.
 
 Global-variable wrappers are not needed because global types are unchanged.
 
 ## 18. Call-site rewriting
 
-When committing an SCC, Crat rewrites calls to each signature-changing SCC function.
+When replacing an SCC, Crat rewrites direct calls to each wrapper-requiring SCC
+function.
 
 Rewrite only callers outside the current SCC.
 
 Use an absolute wrapper path:
 
 ```rust
-crate::proctor_translation_wrapper::foo::bar
+crate::foo::__proctor_wrapper_bar
 ```
 
 Crat must:
 
 - leave calls between functions in the same SCC unchanged;
-- not traverse the generated wrapper module;
 - leave calls to signature-unchanged functions unchanged;
-- rewrite all statically resolved calls from external untransformed callers.
+- use HIR resolution rather than path spelling to identify the callee, so
+  unqualified, imported, aliased, `self`, `super`, `crate`, and fully
+  qualified direct calls are handled consistently;
+- replace the complete callee expression with the allocated absolute wrapper
+  path while preserving the call's arguments and surrounding expression; and
+- rewrite all statically resolved direct calls from external untransformed
+  callers, including multiple calls and calls nested in ordinary expressions
+  or control flow.
+
+A required external call written inside an expression- or statement-macro
+token input is an error, not a silently stale call. Such source is already
+excluded by Section 2.1. Calls introduced only by macro expansion do not have a
+source call expression to rewrite and do not violate this rule.
 
 Because SCCs are processed callee-first:
 
@@ -2095,24 +2452,26 @@ The immutable skeleton JSON may contain stale source snippets after earlier call
 
 ## 19. Compilation and promotion
 
-After Crat creates a candidate project, run:
+After Crat emits the replacement `.rs` file, the orchestrator copies the
+current project to a fresh replacement-project directory, overwrites only the
+copy's library source, and runs:
 
 ```bash
 cargo build
 ```
 
-in that candidate directory.
+in that replacement-project directory.
 
 ### Success
 
-- Promote the candidate to become the current project.
+- Promote the replacement project to become the current project.
 - Mark the SCC as processed.
 - Select the next leaf SCC.
 
 ### Failure
 
 - Capture compiler standard output and standard error.
-- Discard the candidate project.
+- Discard the replacement project.
 - Keep the current project unchanged.
 - Start a repair attempt for the entire SCC.
 
@@ -2143,8 +2502,9 @@ Each repair response repeats the full pipeline:
 
 1. Extract the selected Rust code block.
 2. Run Crat structural validation.
-3. If valid, create a fresh candidate project.
-4. Run `cargo build`.
+3. If valid, ask Crat to emit a replacement `.rs` file.
+4. Copy the current project, overwrite the copied library source, and run
+   `cargo build`.
 5. Promote on success or retry on failure.
 
 If the SCC has not succeeded after ten repair calls, abort the complete orchestration immediately.
@@ -2242,11 +2602,15 @@ Implement and unit-test:
 - the versioned request schema with per-function IDs, names, and target
   skeletons;
 - setup validation and the `setup_error` response;
-- the Phase 2 expected-skeleton setup check that permits only function-local
-  `const`/`static` items, without adding another Phase 1 generator change;
+- the amended Phase 2 expected-skeleton setup check that rejects every
+  function-local item;
 - parsing result snippets;
 - function matching by name;
 - exact expected-function set checks;
+- exact complete lifetime-generic declaration checks, with only Phase
+  1-generated named lifetime parameters supported, no lifetime-parameter
+  attributes or syntactically present `where` clause accepted, and
+  `generic_parameter_mismatch` added to the stable code set;
 - structural target-signature and existing-local-type checks, ignoring all
   binding mutability;
 - label expansion groups;
@@ -2256,8 +2620,7 @@ Implement and unit-test:
 - control-statement expansion rules;
 - strict declaration-identity, by-value-versus-`ref` binding-mode, and
   placement preservation;
-- exact structural preservation of existing function-local `const` and
-  `static` items and rejection of every new function-local item;
+- rejection of every function-local item in a returned transformation;
 - generated-temp naming;
 - generated-temp locality;
 - generated-temp macro-token rejection;
@@ -2270,44 +2633,68 @@ Implement and unit-test:
 - the thin `crat-tool validate --input ... --output ...` command with the exit
   behavior in Section 14.7.
 
-Implement every case in `phase-2-test-plan.md`. All functional tests use
-in-memory APIs and perform no filesystem writes or subprocess invocation. The
-CLI wiring is not tested in Phase 2. The new source-safety and executable
-decisions add generator work and generator regressions during Phase 2, but no
-additional validator rule: safety was already an ignored LLM-header property,
-`main` never enters a validation request, and the forced `main_0` type is
-validated through the ordinary structural parameter-type rule.
+Implement every still-applicable case in `phase-2-test-plan.md` plus the Phase
+1/2 amendment cases in Section 4 of `phase-3-test-plan.md`. Update or remove
+affected existing Phase 1 and Phase 2 Rust tests, but do not edit either
+historical planning document. All functional tests use in-memory APIs and
+perform no filesystem writes or subprocess invocation. The CLI wiring is not
+tested in Phase 2. The new source-safety and executable decisions add
+generator work and generator regressions during Phase 2, but no additional
+validator rule: safety was already an ignored LLM-header property, `main`
+never enters a validation request, and the forced `main_0` type is validated
+through the ordinary structural parameter-type rule. The lifetime-generic
+declaration check, complete function-local-item rejection, and arity-only
+executable recognition are the three intentional amendments added during
+Phase 3 planning.
 
-### Phase 3: Candidate-project generation
+### Phase 3: Item replacement and integration
 
 Implement and test:
 
-- the one-time whole-project safety normalization of every transformation
-  target after skeleton generation;
-- copying into a fresh destination;
+- an `item_replacer` module with a typed versioned `ReplacementRequest`,
+  structured `ReplacementError`, the in-memory `replace_items` operation, and
+  focused tests in `item_replacer/tests.rs`;
+- the completed-Phase-1 generator amendment that rejects every
+  function-local `StmtKind::Item`, plus removal of obsolete local-const/static
+  generator tests;
+- the completed-Phase-2 validator amendment that rejects every
+  function-local item in expected skeletons and returned transformations, plus
+  removal of obsolete local-item preservation logic, diagnostics, and tests;
+- the one-time in-memory safety normalization of every source-defined free
+  function except `main` after skeleton generation, without skeleton JSON or
+  a path list;
+- thin `normalize-safety` and `replace` CLI wiring that each writes only one
+  `.rs` output file, without filesystem or CLI tests;
 - function replacement by full path;
-- unconditional unsafe-target-header enforcement;
-- label removal;
+- preservation of the current function's visibility and normalized safety,
+  validated target lifetime generics/parameters/return/body, and the exact
+  header-composition rules in Section 16.3;
+- recursive label removal;
 - fixed mechanical replacement of the excluded executable `main` when
   committing the supported two-argument `main_0`, while leaving the
   zero-argument case and generated bin shim unchanged;
-- wrapper generation;
+- same-module, collision-free wrapper generation;
+- base/`_0`/`_1` wrapper-name allocation in request order across every sibling
+  item namespace;
+- absolute wrapper-to-implementation delegation;
 - no wrapper for safety-only source/target differences;
 - no wrapper for the forced two-argument `main_0` conversion;
-- wrapper-module maintenance;
-- export handling;
-- external call-site rewriting;
-- avoidance of wrapper-module traversal.
+- ABI, `no_mangle`, and `export_name` movement;
+- rejection of simultaneous source `no_mangle` and `export_name`;
+- every supported input and output conversion in Section 17.4, including the
+  fixed slice bound and empty-slice/null policy;
+- rejection of boxed-slice input conversion and all other unsupported pairs
+  before output;
+- HIR-resolved external call-site rewriting to absolute same-module wrapper
+  paths;
+- preservation of direct and mutual-recursive calls inside the SCC;
+- rejection of a required rewrite inside macro-invocation input; and
+- atomic failure with no partial rewritten source and the coarse
+  debugging-oriented `ReplacementErrorKind` taxonomy from Section 16.2.
 
-Test manually on:
-
-- safe transformation targets that call one another across SCCs;
-- a simple caller-callee chain;
-- direct recursion;
-- a mutually recursive SCC;
-- nested modules;
-- both supported executable `main_0`/`main` forms; and
-- an exported `cdylib` function.
+Implement every case in `phase-3-test-plan.md`. All functional tests use source
+strings and in-memory compiler/parser APIs. They perform no filesystem writes,
+do not construct projects, and do not invoke the CLI or subprocesses.
 
 ### Phase 4: Python orchestration
 
@@ -2328,7 +2715,7 @@ Implement:
 - LiteLLM client;
 - code-block extraction;
 - validation invocation;
-- candidate generation;
+- item replacement into a fresh project;
 - `cargo build`;
 - repair accounting;
 - project promotion and cleanup.
@@ -2350,7 +2737,7 @@ Then add:
 - direct recursion;
 - mutually recursive functions;
 - optional references;
-- boxes and boxed slices;
+- scalar boxes and supported boxed-slice returns;
 - exported library functions;
 - cases that require structural repair;
 - cases that require compiler-guided repair.
@@ -2378,7 +2765,11 @@ The following are intentionally outside this prototype:
 - global-variable wrappers;
 - custom-type wrapper generation;
 - function pointers and callbacks;
-- methods, traits, generics, and closures;
+- methods, traits, source-written generics, and closures;
+- nullable-slice target types such as `Option<&[T]>` and
+  `Option<&mut [T]>`, instead of Phase 3's provisional null/empty
+  correspondence;
+- boxed-slice and optional-boxed-slice wrapper input conversion;
 - integration with non-local transformation wrappers;
 - `proctor.toml` integration;
 - replacement of LiteLLM with the team's shared framework.

@@ -6,7 +6,7 @@ This document consolidates the current conceptual unsupported-input contract
 for PROCTOR's local type-directed transformation prototype. It is derived from
 `prototype-plan.md`, the completed `phase-1-test-plan.md`,
 `phase-2-test-plan.md`, and the design decisions recorded while planning Phase
-2.
+2 and Phase 3.
 
 “Unsupported” means that the local transformation is not intended to receive a
 project containing or requiring the listed feature. It does **not** mean that
@@ -15,7 +15,9 @@ necessarily detects and rejects it. A component may parse, preserve, ignore,
 or even successfully process an unsupported construct. Some component tests
 deliberately exercise such constructs to keep easy low-level behavior robust.
 
-No supportedness checker or normalization pass is required now. A future tool
+No general supportedness checker or unsupported-feature normalization pass is
+required now. Phase 3's one-time safety-qualifier normalization is a separate
+mechanical integration step and does not enforce this contract. A future tool
 may check this contract or rewrite selected unsupported constructs into
 supported forms.
 
@@ -59,9 +61,6 @@ The following project forms are unsupported:
   exported functions only.
 - A project requiring source selection through `cfg` or another build
   configuration that changes the item tree seen by the transformation.
-- A project whose existing source defines an item named
-  `proctor_translation_wrapper` that conflicts with the prototype's generated
-  wrapper module.
 
 An executable is supported only in Crat's C2Rust layout: the Cargo project has
 the same one transformed library source plus one generated bin source that
@@ -83,9 +82,11 @@ non-local transformation are not local-transformation targets.
 
 Source-defined safe and unsafe free functions are both transformation targets.
 Phase 1 preserves source safety in source renderings, makes every target
-skeleton unsafe, and Phase 3 mechanically makes every transformation target
-unsafe before incremental replacement. The following function forms remain
-unsupported:
+skeleton unsafe, and Phase 3 mechanically makes every source-defined free
+function except `main` unsafe before incremental replacement. Safety
+normalization traverses the single source file directly and does not consume
+skeleton JSON or inspect function signatures or bodies. The following
+function forms remain unsupported:
 
 - `const fn`.
 - `async fn`.
@@ -94,11 +95,13 @@ unsupported:
   trait methods, and associated functions defined in an `impl`.
 - Functions with a non-identifier parameter pattern, including wildcard,
   tuple, struct, tuple-struct, slice, `@`, or other destructuring parameters.
+- A function carrying both `#[no_mangle]` and `#[export_name = "..."]`.
 
-An explicit source ABI such as `extern "C"`, visibility, export attributes,
-and `#[no_mangle]` are not unsupported by themselves. Phase 1 sanitizes ABI
-and export syntax only in presentation text and preserves the real project
-metadata for later wrapper handling.
+An explicit source ABI such as `extern "C"`, visibility, an export attribute,
+or `#[no_mangle]` is not unsupported by itself. The simultaneous
+`no_mangle`/`export_name` combination above is the exception. Phase 1
+sanitizes explicit ABI and `no_mangle` syntax only in presentation text and
+preserves the real project metadata for later wrapper handling.
 
 Foreign function declarations and calls, including libc calls, are context
 rather than transformation targets. Their presence is not unsupported merely
@@ -140,6 +143,14 @@ allowed as the sole exception to the general explicit-unsafe-block
 restriction. For the two-argument form, Phase 3 replaces `main` with the fixed
 implementation specified in `prototype-plan.md`; the generated Cargo bin shim
 remains unchanged.
+
+Phase 1 and Phase 3 recognize these cases using only final identifier symbols
+and `main_0` arity. A zero-argument `main_0` leaves its co-located sibling
+`main` unchanged; a two-argument `main_0` receives the forced target `argv`
+type and causes that sibling `main` to be replaced mechanically. Recognition
+does not inspect safety, parameter names or types, return type, visibility,
+ABI, attributes, or either body. The exact forms above remain a
+supported-input assumption rather than a recognition check.
 
 ### 3.3 Traits, impls, and dispatch
 
@@ -191,28 +202,18 @@ low-level validator behavior does not make source closures supported.
 
 ### 3.6 Function-local items
 
-Inside a function body, the only supported item statements are local `const`
-and `static` declarations. This whitelist applies recursively, including
-blocks inside a supported local const/static initializer.
+Every parsed function-local item statement (`StmtKind::Item`) is unsupported,
+recursively at every statement-list depth. This includes local `const`,
+`static` (including `static mut`), functions, type aliases, structs, enums,
+unions, modules, traits, impls, foreign blocks, `use`, `extern crate`, macro
+definitions, and item-position macro invocations.
 
-The following function-local items are unsupported:
-
-- Local functions.
-- Local type aliases.
-- Local structs, enums, and unions.
-- Local modules.
-- Local traits and impls.
-- Local foreign blocks.
-- Local `use` or `extern crate` items.
-- Local macro definitions.
-- Item-position macro invocations.
-- Every other parsed function-local item kind besides `const` and `static`.
-
-A supported local `const` or `static`, including `static mut`, is preserved
-structurally by the Phase 2 validator. Its kind, name, visibility, non-Proctor
-attributes, declared type, item-level static mutability, and initializer must
-remain unchanged. Binding `mut` inside an initializer remains the one global
-binding-mutability exception.
+Phase 1 rejects a transformation target as soon as recursive statement
+labeling encounters such an item and does not label or enter the item's
+initializer or body. Phase 2 rejects every function-local item in both an
+expected skeleton and a returned transformation. Expression- and
+statement-position macro invocations are expressions/statements rather than
+item declarations and remain governed by Section 3.7.
 
 ### 3.7 Macros, conditional compilation, and generated items
 
@@ -226,10 +227,16 @@ The following are unsupported:
 - Derive or attribute expansion that emits additional helper items not marked
   by rustc as automatically derived.
 
-Ordinary expression- or statement-position macro invocations are not
-unsupported by themselves. C2Rust macros are expected to have been expanded
-before this stage, while `unexpand` may restore selected expression macros.
-Phase 1 treats a standalone macro statement as a labeled expression hole.
+Ordinary expression- or statement-position macro invocations are supported
+only when their source token input contains no call expression. C2Rust macros
+are expected to have been expanded before this stage, while `unexpand` may
+restore selected expression macros. Phase 1 treats a standalone macro
+statement as a labeled expression hole. For example, `println!("hello")` is
+supported, while `println!("{}", local_fn())` is unsupported. Calls introduced
+internally by macro expansion do not violate this source-token restriction.
+Expanded-HIR dependency collection may still observe a source call nested in a
+macro input, but Phase 3 cannot reliably redirect that call in the unexpanded
+surface AST.
 
 Ordinary `derive`, `repr`, and other supported item attributes are preserved.
 A derive is supported only under the assumption that every generated HIR item
@@ -275,9 +282,8 @@ target. The two supported, excluded C2Rust `main` wrappers are the sole
 source-input exception, and Phase 3's fixed replacement `main` also contains a
 trusted unsafe block.
 
-Existing non-Proctor attributes on a supported function-local `const` or
-`static` are item attributes, not statement/expression attributes, and are
-supported when preserved exactly.
+Attributes on a function-local item do not create an exception: the enclosing
+item statement is unsupported independently of its attributes.
 
 ### 5.1 Control expressions beneath non-control wrappers
 
@@ -357,16 +363,31 @@ existing representation remains valid.
 
 ### 6.3 API wrapper conversion
 
-For an exported function whose signature changes, the prototype supports only
-the existing unsafe wrapper conversions for:
+For any function whose parameter or return types change, the prototype
+supports compatibility wrappers only for the following conversions.
+
+From a raw-pointer source parameter to a target parameter:
 
 - references and optional references;
-- slices and optional slices;
-- boxes and optional boxes; and
-- boxed slices and optional boxed slices.
+- slices, using the provisional null-to-empty and fixed-bound behavior;
+- scalar boxes and optional scalar boxes; and
+- raw pointers.
 
-An exported signature change requiring another conversion strategy or
-custom-type wrapper is unsupported. Exported-global wrappers are unsupported.
+Target parameters of type `Option<&[T]>`, `Option<&mut [T]>`, `Box<[T]>`, or
+`Option<Box<[T]>>` are unsupported. Nullable target slices and boxed-slice
+input conversion are deferred.
+
+From a target return to a raw-pointer source return:
+
+- references and optional references;
+- slices, using the provisional empty-to-null behavior;
+- scalar boxes and optional scalar boxes;
+- boxed slices and optional boxed slices; and
+- raw pointers.
+
+Structurally identical nonpointer parameters and returns pass through. Any
+other signature change, including a custom-type conversion, is unsupported.
+Exported-global wrappers are unsupported.
 
 ## 7. Unsupported graph, naming, and size cases
 
@@ -379,16 +400,14 @@ The following orchestration cases are unsupported:
 - An SCC whose mandatory direct dependency context alone exceeds 100,000
   rendered characters. The orchestrator aborts rather than omitting a direct
   dependency.
-- A source namespace collision with the generated
-  `proctor_translation_wrapper` module, as stated in Section 2.
 - A case that requires modifying functions outside the current SCC to make one
-  repair candidate structurally valid before the normal wrapper/call-site
+  replacement attempt structurally valid before the normal wrapper/call-site
   migration can occur, other than the specified mechanical replacement of
   executable `main`. The one-time Phase 3 safety normalization happens before
   SCC processing and is not an SCC repair.
 
 Direct recursion and mutually recursive SCCs are not unsupported. They are
-explicitly part of the planned SCC and candidate-generation behavior.
+explicitly part of the planned SCC and item-replacement behavior.
 
 The 100,000-character limit applies to rendered dependency context, not to
 transformation targets, instructions, diagnostics, or prior failed code.
@@ -409,8 +428,6 @@ local transformation targets or independent skeleton records:
 - Top-level `GlobalAsm`.
 - Struct fields, enum variants, and constructors; their containing named type
   is the dependency identity.
-- Function-local `const` and `static` items, which are labeled and preserved
-  but receive no independent item ID.
 - Wrappers generated by the local transformation itself during incremental
   SCC migration.
 
@@ -432,7 +449,10 @@ widen the supported input language:
 - Phase 1 omits every free function named `main` without validating that its
   body is one of the two supported executable forms.
 - Phase 1 forces the supported two-argument `main_0` `argv` target type instead
-  of following its ordinary pointer-analysis decision.
+  of following its ordinary pointer-analysis decision, recognizing the case
+  only by the `main_0` identifier symbol and arity two.
+- Phase 1 rejects every parsed function-local item before labeling or
+  traversing it.
 - Phase 2 validates binding identity, structural position, and
   by-value-versus-`ref` mode for `ref` patterns.
 - Phase 2 checks generated bindings in closure parameters even though source
@@ -449,8 +469,8 @@ in a local-transformation input project.
 
 ## 10. Deferred enforcement
 
-The current work does not add supportedness checks or normalization logic.
-Future work may:
+The current work does not add a general supportedness checker or normalization
+for the unsupported constructs below. Future work may:
 
 - implement a dedicated supportedness checker;
 - report every unsupported construct with source locations;

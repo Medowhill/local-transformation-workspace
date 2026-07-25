@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proctor Repository"
+  short_description: "Onboard and work safely in the Proctor repository"
+  default_prompt: "Use $proctor to understand this repository and make a well-tested change."

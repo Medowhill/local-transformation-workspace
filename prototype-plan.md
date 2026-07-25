@@ -59,31 +59,66 @@ constructs listed there (notably `ref` bindings), but that robustness does not
 make those constructs supported local-transformation inputs. Phase 2 adds no
 supportedness checker or normalization pass.
 
+Phase 4 is implemented after the PROCTOR orchestration framework became
+available. The Phase 4 implementation therefore uses PROCTOR's stage
+envelopes, shared LLM client, prompt library, usage tracker, and reporting
+types directly. It does not implement the historical LiteLLM wrapper proposed
+below. `phase-4-test-plan.md` is the exhaustive executable contract for Phase
+4 and is normative where it supplies Python-level integration detail.
+
+Phase 4 also changes the assumed pipeline boundary. The Rust project received
+by local transformation may have passed through Crat's `split` and `bin`
+passes and may subsequently have been changed by a non-local transformation.
+Local transformation must therefore always run `expand` followed immediately
+by `unexpand` as its first source-preparation operation. `split` and `bin` are
+not rerun. The generated Cargo binary target is a separate crate and remains
+outside local transformation.
+
+Phase 4 makes two intentional amendments inside the existing Crat
+implementation: the `expand` cleanup boundary preserves explicit bin targets,
+and skeleton presentation normalizes every non-`ref` binding to `mut` in both
+source and target renderings while preserving `ref` versus `ref mut` exactly.
+These amendments and the required updates to existing in-memory Crat tests are
+part of Phase 4 and are specified in this document and
+`phase-4-test-plan.md`. Do not edit any earlier phase test plan.
+
 The prototype will validate the following loop:
 
-1. Run Crat's existing whole-program pointer analysis.
-2. Generate target function skeletons without rewriting function bodies.
-3. Translate functions SCC-by-SCC with an LLM.
-4. Validate each LLM result structurally with Crat.
-5. Insert valid results into a fresh project.
-6. Generate wrappers and redirect untransformed callers.
-7. Run `cargo build`.
-8. Repair failures with fresh LLM calls.
-9. Continue until all function SCCs have been translated.
+1. Copy the read-only input Rust project to a stage-private current project.
+2. Run Crat `expand` and `unexpand` on the current project's library crate.
+3. Run Crat's existing whole-program pointer analysis and generate target
+   function skeletons without rewriting function bodies.
+4. Normalize target safety once and build the normalized current project.
+5. Translate functions SCC-by-SCC with an LLM.
+6. Validate each LLM result structurally with Crat.
+7. Generate wrappers and redirect untransformed callers through Crat's
+   replacement operation.
+8. Temporarily install the candidate library source and run `cargo build`.
+9. Keep the source on success or restore the previous source on failure.
+10. Repair failures with fresh LLM calls.
+11. Continue until all function SCCs have been translated.
+12. Copy the final current project to the declared output without `target/`.
 
-The prototype does **not** yet run tests, extract reusable rules, consume `proctor.toml`, or account for wrappers introduced by non-local transformations.
+The prototype does **not** yet run tests or extract reusable rules. It neither
+reads nor writes a rule-set artifact. It preserves `proctor.toml` byte-for-byte
+when present but does not interpret its wrapper metadata. A nonempty
+`wrappers` list is ignored rather than used to include, exclude, or specially
+treat any source function.
 
 ## 2. Scope and assumptions
 
 ### 2.1 Supported program model
 
-The input is one compilable Rust crate produced by C2Rust. At this pipeline
-point, Crat's `expand` and `unexpand` passes have already run, while `split` has
-not run. Consequently, the transformed library-crate source is exactly one
-physical Rust file. That file may contain inline modules, which are traversed
-recursively, but it does not contain external `mod foo;` declarations. A
-supported executable project may additionally contain the generated forwarding
-bin source described below; that file is not transformation input.
+The input is one compilable Cargo project produced by the Translation
+component and possibly changed by a non-local transformation. The library
+crate may be split across external module files when it enters the stage.
+Phase 4 copies the complete input project to its private work directory and
+always runs Crat `expand` followed immediately by `unexpand` there. After this
+preparation, the transformed library-crate source is exactly one physical Rust
+file. That file may contain inline modules, which are traversed recursively,
+but it does not contain external `mod foo;` declarations. A supported
+executable project additionally contains the generated forwarding bin source
+described below; that separate crate is not transformation input.
 
 Only source-defined free functions are transformed. Functions may appear in
 nested modules. Source-defined safe and unsafe free functions are both
@@ -163,9 +198,18 @@ Foreign declarations may be variadic. The source-defined-variadic restriction
 does not apply to an `extern` declaration without a Rust body.
 
 For an executable target, the one transformed source file is still the Cargo
-library source. The additional Cargo bin source is a generated forwarding shim
+library source. Only a root-level library source is supported: after lexical
+normalization of optional `.` components, `[lib].path` must identify one file
+directly beneath the crate root, such as `lib.rs` or `./lib.rs`. Reject every
+`..` component even if it would lexically return to the crate root, because
+Crat's Expand cleanup may remove the intermediate directory before writing the
+library file. Nested, absolute, and crate-escaping library paths are therefore
+unsupported. The additional Cargo bin source is a generated forwarding shim
 that only calls the library's safe `main`; it is outside skeleton generation
-and is never rewritten by this prototype. The supported library source has
+and is never rewritten by this prototype. Its source path is explicitly
+declared by a Cargo `[[bin]]` table. Crat `expand` must preserve every such
+explicit bin-target source while removing the library crate's obsolete split
+`.rs` files. The supported library source has
 exactly one of these C2Rust entry-point pairs, with `main` and `main_0` in the
 same library module:
 
@@ -293,6 +337,32 @@ The prototype requires four logical Crat operations, exposed through
 `crat-tool` subcommands. Phase 1 implements `make-skeleton`, Phase 2 adds
 `validate`, and Phase 3 adds `normalize-safety` and `replace`.
 
+Phase 4 also uses the ordinary `crat` binary for its initial
+`expand,unexpand` preparation. This is not a fifth `crat-tool` operation.
+Before Phase 4, make the ordinary `Expand` pass crate-aware at its filesystem
+cleanup boundary:
+
+- parse every explicit `[[bin]].path` in the input `Cargo.toml` once before
+  recursively removing Rust files;
+- resolve each path relative to the manifest directory and lexically normalize
+  `.` and `..`;
+- reject an absolute path or a normalized path that escapes the crate root;
+- do not recursively follow symlinked directories during cleanup; preserve an
+  explicitly named in-crate bin path itself, including when that path names a
+  symlink;
+- treat multiple manifest spellings that normalize to the same in-crate path
+  as one preserved source;
+- preserve every resolved bin-target source byte-for-byte;
+- retain the existing preservation of the root `build.rs` and `target/`;
+- remove every other obsolete `.rs` file before writing the expanded library
+  source; and
+- do not modify `Cargo.toml`.
+
+This deliberately covers Crat's supported, self-contained forwarding-bin
+layout. Phase 4 does not add support for Cargo auto-discovered binaries,
+examples, benches, tests, custom build-script paths, or binary crates with
+their own module trees.
+
 ### 4.1 Generate skeletons
 
 Expose this operation as:
@@ -381,8 +451,8 @@ crat-tool normalize-safety \
 
 The command reads one Rust source file and writes one Rust source file. It
 does not read skeleton JSON, copy a Cargo project, or modify any other file.
-Project copying and replacement of the library source belong to the
-orchestrator.
+Creation of the stage-private project and installation of the returned source
+belong to Phase 4.
 
 The underlying library operation is parser-only and in-memory:
 
@@ -432,11 +502,10 @@ schema and setup rules are in Section 16.2.
 The production command locates and compiles the current project's one library
 source, calls the in-memory Rust-aware replacement operation, and writes only
 the returned library source to the requested `.rs` output path. It does not
-copy or mutate the current project. The orchestrator copies the current
-project to a fresh destination, overwrites the copied library source with this
-output, builds the copy, and either commits or discards it. The generated
-Cargo bin shim and every other copied file therefore remain orchestrator-owned
-and unchanged by `replace`.
+copy or mutate the current project. Phase 4 temporarily swaps this candidate
+source into the stage-private current project, builds it, and either keeps the
+candidate or restores the prior source. The generated Cargo bin shim and every
+other project file therefore remain stage-owned and unchanged by `replace`.
 
 A suitable library API is:
 
@@ -529,20 +598,22 @@ The target skeleton:
   analyzed target type for pointer locals;
 - preserves an existing explicit local type's surface syntax unless a pointer
   decision changes that local's representation;
-- marks every binding identifier as mutable, regardless of its source
-  mutability;
+- uses the shared presentation binding normalization described below;
 - preserves the source statement and control structure;
 - uses parseable placeholders such as `todo!()` for unimplemented expressions;
 - does not apply transformation-time pointer demotion.
 
-The all-bindings-mutable rule applies recursively to every binding pattern in
-the target skeleton, including function parameters, simple and destructuring
-`let` patterns, `let-else` patterns, `if let` and `while let` patterns, `for`
-patterns, and `match`-arm patterns. Wildcards do not introduce bindings. A
-by-reference binding keeps its by-reference mode and becomes `ref mut`.
-`annotated_source` and `source_signature` retain the source mutability
-exactly; only `annotated_skeleton` and `target_signature` receive the
-permissive mutability update.
+Before cloning the annotated source into the target skeleton, apply one shared
+presentation-only binding normalization recursively to every function
+parameter and binding pattern: force every by-value identifier binding to
+`mut`, preserve `ref` and `ref mut` exactly as written, and leave wildcards
+unchanged. This covers simple and destructuring `let`, `let-else`, `if let`,
+`while let`, `for`, and match-arm patterns. Consequently,
+`annotated_source`, `source_signature`, `annotated_skeleton`, and
+`target_signature` all use the same normalized non-`ref` mutability. Applying
+the normalization before the source-to-skeleton clone is sufficient because
+signature targeting and skeletonization do not introduce binding identifiers.
+The input project and all analyses continue to use the unchanged source AST.
 
 Function safety follows the same source/target separation. Preserve whether
 the source function is safe or unsafe in `annotated_source` and
@@ -572,30 +643,32 @@ unsafe fn main_0(
 ) -> core::ffi::c_int
 ```
 
-Preserve the source signature unchanged, but force the target parameter types
-to:
+Preserve the source parameter types and all other source-signature structure,
+apart from the shared presentation mutability normalization. Force the target
+parameter types to:
 
 ```rust,ignore
 unsafe fn main_0(
-    argc: core::ffi::c_int,
-    argv: &mut [&mut [i8]],
+    mut argc: core::ffi::c_int,
+    mut argv: &mut [&mut [i8]],
 ) -> core::ffi::c_int
 ```
 
-The actual target rendering also applies the all-bindings-mutable rule to both
-parameter patterns. The `argv` override takes precedence over the ordinary
-pointer-analysis decision, including a raw-pointer decision. It does not
-change the first parameter, the return type, or pointer-analysis behavior for
-any other function or binding. A function named `main_0` with arity zero uses
-ordinary target-type decisions. Any other `main_0` arity is outside the
-supported executable model and receives no special override.
+The `argv` override takes precedence over the ordinary pointer-analysis
+decision, including a raw-pointer decision. It does not change the first
+parameter's type, the return type, or pointer-analysis behavior for any other
+function or binding. A function named `main_0` with arity zero uses ordinary
+target-type decisions. Any other `main_0` arity is outside the supported
+executable model and receives no special override.
 
-This mutation is intentional: the target skeleton must not prevent an LLM from
-assigning to an existing binding while translating a pointer operation.
-Mutability is not a semantic target decision. The Phase 2 validator therefore
-ignores binding mutability everywhere and accepts either the presence or
-absence of `mut` in the returned transformation. It still enforces binding
-identity, declaration placement, and target types.
+This presentation normalization is intentional: neither displayed function
+should prevent an LLM from assigning to an existing by-value binding while
+translating it. Ordinary binding `mut` is not a semantic target decision.
+Preserving `ref` versus `ref mut` avoids changing a binding's borrow type. The
+Phase 2 validator continues to ignore `mut` everywhere and accepts either its
+presence or absence in the returned transformation. It still enforces
+by-value-versus-`ref` mode, binding identity, declaration placement, and
+target types.
 
 Before attaching a label to a statement, recursively reject every
 `StmtKind::Item` with `GenerationErrorKind::FunctionLocalItem`; the error
@@ -666,9 +739,9 @@ Apply this to `annotated_source`, `annotated_skeleton`, `source_signature`,
 `target_signature`, and any emitted declaration/definition on which the
 attribute can occur. Preserve visibility, `unsafe`, parameter names, all other
 function attributes, and type-item attributes including `derive` and `repr`.
-Preserve source binding mutability in source renderings; apply the separate
-all-bindings-mutable skeleton rule above to target renderings. Sanitization is
-presentation-only: pointer analysis and the input project always use the
+Apply the shared non-`ref` binding-mutability normalization above to both
+source and target function renderings. Sanitization and binding normalization
+are presentation-only: pointer analysis and the input project always use the
 unchanged source, and later project-rewriting operations must recover
 ABI/export information from the project AST rather than from the sanitized
 JSON.
@@ -870,44 +943,232 @@ undefined fields or `null` placeholders.
 
 ## 7. Python orchestrator
 
-The orchestrator is a separate Python program.
+Implement Phase 4 as the standalone PROCTOR stage
+`stages/local-transformation/`, with stage ID `local_transformation`. Follow
+the current typed example LLM stage rather than introducing another
+orchestration framework. Phase 4 adds this standalone stage and its manifest,
+but does not add, remove, reorder, enable, or disable any entry in
+`configs/full_pipeline.toml`. Its `stage.toml` contract is:
 
-It is responsible for:
+```toml
+id = "local_transformation"
+version = "0.1.0"
+description = "Transform pointer-local Rust code SCC-by-SCC with validated LLM output."
 
-- invoking Crat analysis and skeleton generation;
-- loading the skeleton JSON;
-- building the function-call graph;
-- computing SCCs;
-- scheduling SCCs;
-- constructing dependency context;
-- constructing LLM prompts;
-- calling the LLM through LiteLLM;
-- extracting Rust code from responses;
-- invoking Crat validation;
-- invoking Crat item replacement to produce one Rust source file;
-- copying the current project and overwriting only its library source with
-  Crat's output;
-- running `cargo build`;
-- managing repair attempts;
-- promoting successful replacement projects.
+exec = ["python3", "main.py"]
+warmup = ["python3", "main.py", "--build-only"]
 
-It must not parse Rust source.
+[requires]
+rust_project = "required"
 
-### 7.1 LLM abstraction
+[produces]
+rust_project = true
 
-Use LiteLLM directly for the first prototype.
-
-Keep the LiteLLM-specific code behind a minimal interface, for example:
-
-```python
-class LlmClient:
-    def generate(self, prompt: str) -> str:
-        ...
+[config]
+crat_dir = { type = "string", default = "../crat", doc = "crat checkout, relative to this stage" }
 ```
 
-Each call is independent. No conversation history is retained.
+As with `example-llm-stage`, give the stage its own `pyproject.toml` with a
+`proctor` dependency sourced from the repository at `../..`, and check in its
+`uv.lock`. This lets the orchestrator invoke the standalone stage through its
+isolated `uv` environment while the stage directly uses the shared framework.
 
-This interface should be replaceable by the team's shared LLM framework later.
+The dependency-context limit of 100,000 characters and the maximum of ten
+repair calls are fixed prototype semantics, not configuration options. Model,
+provider, retry, rate-limit, pricing, and provider-specific settings come only
+from `stage_input.framework.llm`.
+
+Validate the stage-specific `config` table before other side effects. It may
+contain only `crat_dir`. When omitted, use the manifest default `../crat`,
+resolved relative to the stage directory in the same manner as the existing
+Crat adapter. When supplied, `crat_dir` must be a nonempty string; reject
+unknown keys and wrong types with a failure envelope. Report the one effective
+resolved setting in `config_used`.
+
+Use `StageInput` and `StageOutput` from `proctor.contracts`. Require a
+read-only input `rust_project`, a declared `outputs.rust_project` path that
+does not yet exist, and `framework.workdir`. Produce only `rust_project`;
+report `rule_set = null`.
+Use `framework.workdir` for the current project and all request, response,
+candidate, and rollback files. Put a command/diagnostic log under
+`outputs.artifacts_dir` when supplied and report its path relative to that
+directory in `StageOutput.logs`. When `outputs.artifacts_dir` is absent, keep
+the diagnostic log under the work directory for debugging but leave
+`StageOutput.logs` empty: the stage contract permits reported logs only
+relative to the declared artifacts directory.
+
+The stage is responsible for:
+
+- building both `crat` and `crat-tool` once per Crat commit, using the pinned
+  Crat toolchain and the same sysroot/library environment discipline as the
+  current `crat-adapter`;
+- copying the input project once to a new stage-private current-project
+  directory, including an existing root `target/`;
+- preparing that copy with ordinary Crat `expand,unexpand` in one in-place
+  invocation, with `--unexpand-use-print`;
+- invoking `crat-tool` skeleton, safety-normalization, validation, and
+  replacement operations;
+- loading and checking skeleton JSON without parsing Rust;
+- building and scheduling the function SCC graph;
+- rendering dependency context and prompts;
+- using PROCTOR's LLM client, prompt library, usage tracker, and pricing;
+- extracting Rust code blocks without parsing their Rust contents;
+- installing one candidate library source transactionally and invoking
+  `cargo build`;
+- restoring the previous source after failed candidate builds;
+- managing the bounded repair loop; and
+- copying the final current project to the declared output while excluding
+  the root `target/`.
+
+The stage must not parse or rewrite Rust source. Reading `Cargo.toml` with
+`tomllib` to obtain the explicit `[lib].path` is project plumbing, not Rust
+parsing. Require that value to be a string whose lexically normalized path is
+one root-level file inside the crate. Permit optional `.` components but
+reject every `..` component; nested, absolute, and crate-escaping library
+paths are unsupported and fail before Crat is invoked. The stage never mutates
+the input artifact or writes the output destination before every SCC has
+succeeded.
+
+### 7.1 Preparation order
+
+Use this exact order:
+
+1. Validate the stage config and envelope paths, refuse an existing output
+   destination, parse the input `Cargo.toml`, and validate its `[lib].path` as
+   a root-level library source before any build, copy, or tool call.
+2. Build or locate `crat` and `crat-tool`.
+3. Copy the complete input project to `<workdir>/current`.
+4. Run ordinary Crat in-place with passes `expand,unexpand`, the
+   `--unexpand-use-print` flag. If the copied project contains a regular
+   root-level `config.toml`, pass it with `--config`; otherwise omit
+   `--config` and use Crat's defaults.
+5. Require the validated library source path to identify a regular file in
+   the prepared current project.
+6. Run `crat-tool make-skeleton` against the prepared current project.
+7. Load the immutable skeleton records.
+8. Run `crat-tool normalize-safety` to a scratch `.rs` file and atomically
+   install it as the current library source.
+9. Run `cargo build` in the current project. Failure here aborts Phase 4; it
+   is not an LLM repair opportunity.
+10. Build the graph and process all SCCs.
+11. After all SCCs succeed, copy current to the output while ignoring only
+    the root `target/`.
+
+The Python runner must assemble the four `crat-tool` operations in exactly
+these shapes:
+
+```text
+<crat-tool> make-skeleton --output <skeletons.json> <current-project>
+<crat-tool> normalize-safety --output <normalized.rs> <library-source>
+<crat-tool> validate --input <validation-request.json> --output <validation-response.json>
+<crat-tool> replace --request <replacement-request.json> --output <candidate.rs> <current-project>
+```
+
+Each request/output pathname is stage-private. Before launching an operation
+that is expected to create an output, remove any previous scratch output at
+that exact path. Success requires both a zero exit status and a newly created
+regular output file. A nonzero exit, missing output, non-regular output, or
+stale-output reuse is a fatal tool/protocol failure. This applies equally to
+skeleton, normalization, validation, and replacement. The ordinary Crat
+preparation command is likewise fatal on nonzero exit.
+
+Preparation or integration subprocess failures, malformed skeleton data,
+validator `setup_error`, replacement failure, and inability to restore a
+source transaction abort the stage immediately. They are tool or invariant
+failures, not LLM repair failures.
+
+`proctor.toml`, `Cargo.toml`, `Cargo.lock`, the explicit bin-target sources,
+and all non-library files are copied normally and are never rewritten by
+Python. Do not require or parse `proctor.toml`; if present, its exact bytes
+must reach the final output unchanged. In particular, ignore a nonempty
+`wrappers` list. Existing wrapper functions visible in skeleton JSON are
+ordinary functions for this prototype because no metadata-aware inclusion or
+exclusion is performed.
+
+### 7.2 Shared LLM infrastructure
+
+Use `proctor.llm.client.LlmClient` directly. Construct `UsageTracker` from the
+run/stage/item identity and `PricingTable.from_config`, writing to
+`framework.usage_log` when supplied and otherwise to
+`<framework.workdir>/usage.jsonl`. The fallback keeps direct standalone stage
+invocations fully tracked; ordinary PROCTOR runs always supply the official
+stage-local usage path. Load the versioned stage-local prompt through
+`PromptLibrary`; do not embed an unversioned prompt string in Python.
+
+Make a shallow private copy of `framework.llm` and set its effective
+`context_overflow` to `"error"` before constructing `LlmClient`. Do not mutate
+the envelope's settings. The current shared client already supports `"error"`
+and uses it by default, so Phase 4 requires no framework change for this
+policy. A provider `ContextLimitExceeded` therefore records the failed attempt
+through the shared tracker and then aborts the entire transformation. It is
+never truncated, retried as an SCC repair, or counted against the ten repair
+calls. Other LLM errors follow the shared client's provider-retry policy; if
+the client ultimately raises, abort the stage.
+
+Each SCC generation is one independent `Request` containing one user message.
+No assistant/user history is retained. A repair is another independent
+request containing the complete original material plus only the latest failed
+text and latest diagnostics. Attach `RequestMetadata` with the run ID, stage
+ID, an SCC item string formed by joining the ascending decimal member item IDs
+with commas (for example, `0` or `0,3`), and the rendered prompt
+ID/version/hash.
+
+Aggregate every usage record, including provider retries and failed calls,
+into the final `StageOutput.usage`. Report each distinct provider/model pair
+used, in first-observed order, and the one prompt ID/version. A failure output
+should still report usage accumulated before failure when it can do so
+reliably. Derive the aggregate from the `UsageTracker` records rather than
+only from successful `Response` objects: a retrying logical generation may
+therefore contribute multiple usage calls. The generation-call metric counts
+logical SCC requests, while `StageOutput.usage.calls` counts provider attempts
+recorded by the tracker.
+
+Use the framework's reporting convention when aggregating tracker records:
+
+- with no LLM provider attempt, report `usage = null`, `models = []`, and
+  `prompts = []`;
+- otherwise, sum the integer input, cached-input, and output token fields;
+- report `reasoning_tokens = null` when every record has null reasoning usage,
+  otherwise sum the nonnull reasoning-token values;
+- sum nonnull costs, but report `cost_usd = null` if any token-bearing record
+  has unknown cost; a failed zero-token attempt with null cost does not make an
+  otherwise known total unknown, and a nonempty collection containing only
+  zero-token failed attempts reports `0.0`; and
+- report the prompt once whenever at least one logical LLM request was issued,
+  including when every provider attempt failed.
+
+Report these exact flat metric keys on success and, where known, on failure:
+`function_count`, `scc_count`, `llm_generation_calls`, `repair_calls`,
+`structural_failures`, `compilation_failures`, and `cargo_builds`. The Cargo
+count includes the normalized initial build. Metrics do not replace the
+per-attempt usage log.
+
+### 7.3 Skeleton loading
+
+Represent loaded records with typed Python dataclasses or an equivalent typed
+model. Validate only the integration contract needed by Python; do not
+duplicate Crat's semantic tests. Require:
+
+- a top-level JSON array;
+- integer IDs in the inclusive Rust `u64` range `0..=18446744073709551615`
+  (booleans are not integers here);
+- globally unique IDs;
+- paths unique within the record's dependency namespace: `Fn`, `Static`, and
+  `Const` are value-namespace records, while `TyAlias`, `Enum`, `Struct`, and
+  `Union` are type-namespace records. Permit one value record and one type
+  record to have the same display path, as in the Phase 1 `type X`/`const X`
+  regression;
+- one of the seven Section 6 kinds;
+- the Section 6 required string and dependency-list fields for each kind;
+- integer dependency IDs that resolve to an included record; and
+- `signature_dependencies` to be a subset of `dependencies` for `Fn`,
+  `Static`, and `Const`.
+
+Preserve every Rust text field exactly as decoded from JSON. Sort or deduplicate
+nothing while loading: reject duplicate dependency IDs and require Crat's
+lists to already be in strictly increasing item-ID order. These checks expose
+corrupt or incompatible tool output without retesting how Crat generated the
+contents.
 
 ## 8. Function graph and SCC scheduling
 
@@ -925,7 +1186,10 @@ f -> g
 
 when `f` directly calls `g`.
 
-Foreign functions are absent from the graph.
+An ID naming a non-function record is not an edge. Foreign functions are
+absent from the records and graph. Keep direct self-edges. Traverse function
+nodes and adjacency lists in increasing item-ID order so the result does not
+depend on JSON object identity or Python set order.
 
 ### 8.2 SCCs
 
@@ -935,11 +1199,15 @@ A leaf SCC has no outgoing edge to an unprocessed SCC.
 
 Because edges point from callers to callees, leaf-first processing translates callees before external callers.
 
-A singleton SCC is recursive when its function has a self-edge.
+A singleton SCC is recursive only when its function has a self-edge. Store
+members of each SCC in increasing item-ID order.
 
 ### 8.3 Deterministic scheduling
 
-When multiple leaf SCCs are available, choose deterministically, for example by the smallest item ID in each SCC.
+At every scheduling step, recompute or update the set of unprocessed leaf
+SCCs. Choose the leaf whose smallest member item ID is smallest. Mark an SCC
+processed only after its candidate source builds successfully. This fixes one
+exact schedule for disconnected components as well as call chains and cycles.
 
 ### 8.4 Function-name uniqueness
 
@@ -950,6 +1218,10 @@ Crat identifies returned functions by name inside the single LLM response. There
 If duplicate function names occur within one SCC, orchestration aborts.
 
 Functions in different SCCs may have the same final name.
+
+Perform this check immediately before the SCC's first LLM request. Use member
+item-ID order for the diagnostic. Do not globally reject duplicate final names
+in different SCCs.
 
 ## 9. Prompt-context construction
 
@@ -963,6 +1235,9 @@ The transformation targets do not count toward the dependency-character limit.
 The dependency context has a limit of 100,000 characters.
 
 All dependency records are deduplicated by item ID and ordered deterministically by ID.
+
+Context construction operates on records and strings only. It does not inspect
+Rust syntax.
 
 ### 9.1 Transformation targets
 
@@ -980,6 +1255,10 @@ If the SCC contains multiple functions, include the source and target signatures
 For a directly recursive singleton SCC, include its own source and target signatures.
 
 For a nonrecursive singleton SCC, omit the redundant self-signature dependency.
+
+Represent an SCC signature dependency with the same function-context rendering
+used for an ordinary function dependency. Do not emit an SCC member twice
+when it is also present in another member's direct dependency list.
 
 ### 9.3 Value dependencies
 
@@ -1012,7 +1291,20 @@ Type dependencies are followed transitively, as they have only `dependencies` bu
 
 ### 9.5 Transitive closure
 
-Traverse dependencies breadth-first.
+Build the union of every target's direct dependencies. Remove IDs belonging to
+the current SCC because their required signatures are handled by Section 9.2.
+The remaining direct IDs form mandatory depth zero.
+
+Traverse subsequent dependencies breadth-first over the union graph:
+
+- from a `Fn`, `Static`, or `Const`, follow only
+  `signature_dependencies`; and
+- from a `TyAlias`, `Enum`, `Struct`, or `Union`, follow `dependencies`.
+
+Do not follow the body-only portion of a function, static, or const
+dependency. Deduplicate an ID at its shortest depth, and do not traverse back
+through an SCC target. Within a depth and in the final rendering, order records
+by item ID.
 
 Examples:
 
@@ -1029,119 +1321,202 @@ Use this policy:
 
 1. Add mandatory SCC signature dependencies.
 2. Add all direct dependencies.
-4. Tentatively add the complete next breadth-first depth.
-5. Keep the depth only if the total dependency context remains within 100,000 characters.
-6. Continue until the next complete depth does not fit.
-7. Once a depth is rejected, do not consider deeper depths.
+3. Render those mandatory entries together in item-ID order.
+4. Abort before the LLM call if that rendering exceeds 100,000 Python
+   characters.
+5. Tentatively add the complete next breadth-first depth.
+6. Keep the depth only if the complete re-rendered context is at most 100,000
+   characters.
+7. Continue until the next complete depth does not fit.
+8. Once a depth is rejected, do not consider deeper depths.
 
 If mandatory direct dependencies already exceed 100,000 characters, abort the SCC instead of silently omitting them.
 
 Instructions, transformation targets, prior failed code, and diagnostics are outside this limit.
 
-## 10. Initial LLM prompt template
+Count characters with Python `len()` on the fully rendered Unicode string,
+including headings, fences, separators, and newlines. An empty dependency
+context is the empty string. Join nonempty entries with exactly two newline
+characters and add no leading or trailing separator.
 
-Use a prompt following this structure.
+Render entries exactly in these shapes, substituting the record's exact text:
 
 ````text
-You are transforming functions in unsafe Rust code generated from C.
+### Function <id>: <path>
+Source signature:
+```rust
+<source_signature>
+```
+Target signature:
+```rust
+<target_signature>
+```
+````
 
-Definitions:
+````text
+### <Static-or-Const> <id>: <path>
+```rust
+<declaration>
+```
+````
 
-- Source code is the current function implementation before pointer-type
-  transformation.
-- The source signature is the signature in the source code.
-- The target skeleton was generated from whole-program static pointer analysis.
-- The target signature is the signature in the target skeleton.
-- A dependency's source signature shows its signature before transformation.
-- A dependency's target signature shows how transformed code must call it.
+````text
+### <TyAlias-or-Enum-or-Struct-or-Union> <id>: <path>
+```rust
+<definition>
+```
+````
 
-Implement every function in the Transformation Targets section.
+Render transformation targets in SCC member-ID order and join them with two
+newlines:
+
+````text
+### Function <id>: <path>
+Source:
+```rust
+<annotated_source>
+```
+Target skeleton:
+```rust
+<annotated_skeleton>
+```
+````
+
+## 10. Initial LLM prompt template
+
+Store the following exact text as stage-local `PromptLibrary` prompt
+`local_transformation`, version `1`, with variables `dependency_context`,
+`transformation_targets`, and the single pre-rendered `repair_context`.
+The prompt file's frontmatter is exactly:
+
+```toml
++++
+id = "local_transformation"
+version = 1
+description = "Transform one Rust function SCC against Crat skeletons."
+variables = ["dependency_context", "transformation_targets", "repair_context"]
++++
+```
+
+The exact prompt body begins after that frontmatter:
+
+````text
+You are transforming unsafe Rust functions generated from C.
+
+The source code is the original implementation. The target skeleton defines
+the transformation goal. A dependency's source signature is its signature
+before transformation; its target signature is how transformed code must call
+it.
+
+Implement every function in Transformation Targets exactly once. Emit no
+other top-level item. Use Dependency Context only as reference; do not emit or
+redefine its functions, types, statics, or constants.
 
 Requirements:
 
-1. Preserve the exact behavior of the source code.
-2. Strictly follow the lifetime-generic declaration, parameter types, return
-   type, and local-variable types fixed by the target skeleton. The skeleton
-   deliberately marks every binding `mut`; you may keep or remove `mut` as
-   needed because binding mutability is not validated.
+1. Exactly preserve source behavior wherever it is defined, including apparent
+   bugs. Do not add validation, fallback behavior, or error handling absent
+   from the source; preserve its preconditions. For example, if the source
+   immediately dereferences a raw pointer, directly unwrap the corresponding
+   `Option` instead of adding a conditional check.
+2. Use the target skeleton's exact lifetime-generic declaration, parameter
+   types, return type, and local-variable types.
 3. Call transformed function dependencies using their target signatures.
-4. Do not change any existing function name, parameter name, or local-binding
-   name. Preserve each existing declaration exactly once in its original label
-   and branch, arm, loop, or block role.
-5. New local bindings may be introduced only with names of the form
-   `proctor_temp_var_n`, where `n` is a nonnegative integer.
-6. A new temporary binding may be used only within the labeled expansion group
-   in which it is declared, including unlabeled nested code inside that group.
-7. Do not define functions, types, statics, constants, modules, or any other
-   item inside a transformation target.
-8. Every source statement label must appear at least once in the output.
-9. A source statement may expand into one or more consecutive sibling statements
-   with the same label.
-10. Repeated occurrences of one label must be consecutive siblings at the same
-    statement-list level. Do not repeat the same label in nested statements.
-11. Newly introduced nested statements must be unlabeled.
-12. Preserve the order of existing labels.
-13. Preserve every existing control-structure kind and its existing labeled
-    branch/body structure. Conditions, scrutinees, patterns, and statement
-    contents may be rewritten.
-14. If a labeled control statement expands into multiple sibling statements,
-    exactly one sibling must preserve the original control structure. The other
-    siblings must not be control-root statements and must contain no existing
-    labels.
-15. Do not introduce an explicit `unsafe` block. These functions are already
-    unsafe functions, and unsafe operations may be used directly when needed.
-16. Do not add statement or expression attributes other than the required
-    `#[proctor(N)]` statement labels.
-17. Return exactly one fenced Rust code block containing all requested functions.
-    Do not return prose.
+4. Keep every existing function, parameter, and local-binding name. Preserve
+   each existing declaration exactly once in the same label, pattern, and
+   control-flow role.
+5. Name every new local binding `proctor_temp_var_n`, where `n` is a
+   nonnegative integer. Use it only within the consecutive statements carrying
+   the same `#[proctor(N)]` label that encloses its declaration, including
+   unlabeled code nested within those statements.
+6. Do not define a function, type, static, constant, module, or other item
+   inside a transformation target.
+7. At each existing statement-list level, preserve every source
+   `#[proctor(N)]` label in order. A labeled statement may expand only into one
+   or more consecutive sibling statements with the same label. Do not insert
+   unlabeled siblings at that level, repeat a label in nested code, or label
+   newly introduced nested statements.
+8. Preserve each existing control form, its direct role, its
+   branch/arm/guard/body structure, and all existing nested labels. Plain
+   blocks, `if`, `if let`, `while`, `while let`, `for`, `loop`, and `match`
+   are distinct. A `let ... else` must remain a `let ... else`. A control form
+   used directly as a `let` initializer, `return` value, `break` value, or
+   match-arm result must remain in that role. Conditions, scrutinees, patterns,
+   and statement contents may be rewritten.
+9. If a labeled statement containing a control form expands into multiple
+   same-label siblings, exactly one sibling must preserve that form, role, and
+   all its existing labeled nested statements. Other siblings must not have a
+   control form in that same direct role and must contain no labels below their
+   own group label.
+10. Do not introduce an explicit `unsafe` block or a statement or expression
+    attribute other than the required `#[proctor(N)]` labels.
+11. Return exactly one Rust code block delimited by triple-backtick fences.
+    Include all requested functions and no prose. Do not use tilde or
+    longer-backtick fences.
 
 Example:
 
 Source:
 
 ```rust
-unsafe fn read_value(p: *const i32) -> i32 {
+unsafe fn read_value(mut p: *const i32, mut q: *const i32) -> i32 {
     #[proctor(0)]
-    let x: i32 = *p.add(1);
+    let mut x: i32 = *p.add(1);
     #[proctor(1)]
-    x
+    return if q.is_null() {
+        #[proctor(2)]
+        x
+    } else {
+        #[proctor(3)]
+        x + *q
+    };
 }
 ```
 
 Target skeleton:
 
 ```rust
-unsafe fn read_value(mut p: &[i32]) -> i32 {
+unsafe fn read_value(mut p: &[i32], mut q: Option<&i32>) -> i32 {
     #[proctor(0)]
     let mut x: i32 = todo!();
     #[proctor(1)]
-    todo!()
+    return if todo!() {
+        #[proctor(2)]
+        todo!()
+    } else {
+        #[proctor(3)]
+        todo!()
+    };
 }
 ```
 
 Valid output:
 
 ```rust
-unsafe fn read_value(p: &[i32]) -> i32 {
+unsafe fn read_value(mut p: &[i32], mut q: Option<&i32>) -> i32 {
     #[proctor(0)]
-    let x: i32 = p[1];
+    let mut x: i32 = p[1];
     #[proctor(1)]
-    x
+    return if q.is_none() {
+        #[proctor(2)]
+        x
+    } else {
+        #[proctor(3)]
+        x + *q.unwrap()
+    };
 }
 ```
 
 Dependency Context:
 
-{{DEPENDENCY_CONTEXT}}
+{{ dependency_context }}
 
 Transformation Targets:
 
-{{TRANSFORMATION_TARGETS}}
+{{ transformation_targets }}
 
-{{REPAIR_CONTEXT}}
+{{ repair_context }}
 ````
-
-For an initial request, `REPAIR_CONTEXT` is empty.
 
 For a repair request, use:
 
@@ -1151,27 +1526,44 @@ The previous transformation failed.
 Previous transformation:
 
 ```rust
-{{FAILED_TRANSFORMATION}}
+<latest failed text>
 ```
 
 Diagnostics:
 
 ```text
-{{DIAGNOSTICS}}
+<latest diagnostics>
 ```
 
-Regenerate every function in the Transformation Targets section.
+Regenerate every function in Transformation Targets.
 ````
 
-Each repair request uses the complete original prompt plus the latest failed transformation and latest diagnostics.
+The initial request renders `repair_context` as the empty string. A repair
+renders exactly the block above, with only the latest failed text and latest
+diagnostics substituted into the complete original prompt. Every render goes
+through `PromptLibrary`, and the request metadata records prompt ID
+`local_transformation`, version `1`, and the rendered content hash.
 
 ## 11. LLM response extraction
 
-The orchestrator instructs the LLM to return exactly one fenced Rust code block and no prose.
+The orchestrator instructs the LLM to return exactly one Rust code block
+delimited by triple backticks and no prose. Only triple-backtick fences are
+recognized; tilde fences and fences of four or more backticks are not blocks.
+
+A recognized opening fence starts in column zero and is exactly three
+backticks followed either by no tag or immediately by one nonempty ASCII
+language tag containing only letters, digits, `_`, `+`, or `-`. Nothing else
+may occur on that line. A recognized closing fence starts in column zero,
+contains exactly three backticks and no other character, and ends at the next
+line ending or end of response. Accept LF and CRLF as fence-line endings.
+Indented fences, inline fences, opening tags containing whitespace or
+punctuation outside that set, closing fences with trailing whitespace, and
+unclosed fences are not recognized. Pair recognized opening and closing
+fences from left to right without overlap.
 
 To tolerate formatting errors:
 
-1. Find all fenced code blocks.
+1. Find all triple-backtick fenced code blocks.
 2. Ignore prose outside code blocks.
 3. If one block exists, use it.
 4. If multiple blocks exist, choose the longest.
@@ -1181,6 +1573,19 @@ To tolerate formatting errors:
 Pass the selected block unchanged to Crat.
 
 The orchestrator does not parse Rust.
+
+Measure block length by the number of content characters, excluding the
+opening/closing fence, optional language tag, and exactly one LF or CRLF that
+separates the content from each fence. Preserve every other character and line
+ending exactly; do not otherwise strip or normalize the content. If no block
+exists, the raw LLM response becomes the latest failed text and the
+deterministic diagnostic is:
+
+```text
+The LLM response contained no triple-backtick fenced code block; return exactly one triple-backtick fenced Rust code block.
+```
+
+This is an ordinary repairable response-format failure.
 
 ## 12. Structural model
 
@@ -1959,13 +2364,21 @@ Each SCC is all-or-nothing.
 No function in the SCC is committed until:
 
 1. every function passes Crat structural validation; and
-2. the complete replacement project passes `cargo build`.
+2. the current project with the complete SCC candidate installed passes
+   `cargo build`.
 
 If either step fails:
 
-- discard the entire replacement project;
-- discard partial success within the SCC;
+- restore the exact pre-attempt library source when a candidate had been
+  installed;
+- leave the current project source at the last successfully promoted SCC;
+- discard partial success within the SCC; and
 - regenerate every function in the SCC.
+
+The current project's `target/` is an incremental Cargo cache and is not part
+of the source transaction. A failed build may update it. Cargo fingerprints
+the next build against the actually installed source, so Phase 4 retains the
+cache rather than copying or rolling it back.
 
 ## 16. Item replacement and integration
 
@@ -2008,9 +2421,8 @@ Normalization:
 - creates no wrapper merely for a safe-to-unsafe normalization.
 
 The production command writes only this returned source to its requested
-`.rs` output path. The orchestrator copies the original project, overwrites
-the copied library source with that file, and builds the resulting normalized
-initial current project.
+`.rs` output path. Phase 4 atomically installs it into the stage-private
+current project and builds the resulting normalized initial current project.
 
 Normalizing every target before the first callee-first SCC replacement is
 required for incremental compilation. Otherwise, replacing a safe callee with
@@ -2452,30 +2864,48 @@ The immutable skeleton JSON may contain stale source snippets after earlier call
 
 ## 19. Compilation and promotion
 
-After Crat emits the replacement `.rs` file, the orchestrator copies the
-current project to a fresh replacement-project directory, overwrites only the
-copy's library source, and runs:
+After Crat emits the replacement `.rs` file, Phase 4 uses a source-file
+transaction in the one stage-private current project:
+
+1. Keep the candidate outside the project tree.
+2. Copy the exact current library source to a rollback path outside the
+   project tree.
+3. Atomically replace the current library source with the candidate.
+4. Run:
 
 ```bash
 cargo build
 ```
 
-in that replacement-project directory.
+in the current-project directory.
+
+The rollback copy must not have an `.rs` path inside the Cargo project. Wrap
+installation and building in `try/finally`: every unsuccessful or exceptional
+attempt after installation restores the previous source atomically. Failure
+to restore is a fatal stage error. The stage's input artifact remains
+read-only throughout, and a killed stage can damage only disposable work
+state; a fresh invocation recreates `<workdir>/current` from the input rather
+than resuming an uncommitted swap.
 
 ### Success
 
-- Promote the replacement project to become the current project.
+- Keep the installed candidate as the current library source.
+- Delete the rollback copy.
 - Mark the SCC as processed.
 - Select the next leaf SCC.
 
 ### Failure
 
 - Capture compiler standard output and standard error.
-- Discard the replacement project.
-- Keep the current project unchanged.
+- Restore the rollback source.
+- Keep all other current-project files unchanged. Retain `target/`.
 - Start a repair attempt for the entire SCC.
 
-The prototype assumes Crat's integration routines are correct. Compiler diagnostics are given to the LLM even when they refer outside the SCC. The LLM may change only SCC functions. If that is insufficient, the retry limit eventually aborts orchestration.
+The prototype assumes Crat's integration routines are correct. A nonzero or
+malformed `replace` operation aborts rather than asking the LLM to repair an
+integration failure. Compiler diagnostics are given to the LLM even when they
+refer outside the SCC. The LLM may change only SCC functions. If that is
+insufficient, the retry limit eventually aborts orchestration.
 
 ## 20. Repair policy
 
@@ -2503,11 +2933,32 @@ Each repair response repeats the full pipeline:
 1. Extract the selected Rust code block.
 2. Run Crat structural validation.
 3. If valid, ask Crat to emit a replacement `.rs` file.
-4. Copy the current project, overwrite the copied library source, and run
-   `cargo build`.
-5. Promote on success or retry on failure.
+4. Transactionally install it in the current project and run `cargo build`.
+5. Keep it on success or restore and retry on failure.
 
 If the SCC has not succeeded after ten repair calls, abort the complete orchestration immediately.
+
+The initial call plus ten repair calls means at most eleven LLM generation
+calls per SCC, excluding provider-level retries internal to `LlmClient`.
+Increment the repair count before each repair LLM call. Structural
+`invalid`, missing-fence extraction, and failed candidate compilation consume
+the same counter. Validator `setup_error`, validator process/protocol failure,
+replacement failure, preparation failure, safety-normalization failure,
+initial normalized-project build failure, malformed skeleton data, exhausted
+provider retries, authentication failure, and context overflow abort
+immediately and do not consume an SCC repair.
+
+For structural invalidity, use the complete raw text of the validator response
+file, unchanged after it has been parsed successfully, as the latest
+diagnostics and use the selected code block as the latest failed
+transformation. Do not reserialize the parsed JSON: whitespace, key order, and
+the presence or absence of a final newline in the tool's response are part of
+the diagnostic text sent on that repair. For a missing fence, use the complete
+raw response as failed text and the deterministic extraction diagnostic. For
+compilation failure, use the selected transformation and both captured
+streams, labeled `cargo build stdout:` and `cargo build stderr:`. Do not
+truncate diagnostics; if the resulting provider request exceeds its context
+window, the required `context_overflow = "error"` behavior aborts honestly.
 
 ## 21. Completion
 
@@ -2519,10 +2970,15 @@ For this prototype:
 - no test suite is executed;
 - no reusable rules are extracted;
 - no rule-set file is read or written;
-- `proctor.toml` is not required;
-- wrappers from non-local transformations are ignored;
+- `proctor.toml` is neither required nor parsed and is preserved unchanged
+  when present;
+- wrapper metadata from non-local transformations is ignored even when
+  nonempty;
 - all supported free functions except the mechanically managed executable
-  `main` are transformed.
+  `main` are transformed;
+- the final library source remains unsplit;
+- explicit Cargo bin-target sources and Cargo metadata remain unchanged; and
+- the final output excludes the root `target/`.
 
 This milestone demonstrates:
 
@@ -2700,27 +3156,50 @@ do not construct projects, and do not invoke the CLI or subprocesses.
 
 Implement:
 
-- Crat process invocation;
-- skeleton JSON loading;
+- `stages/local-transformation/` as a typed standalone PROCTOR stage requiring
+  and producing only `rust_project`;
+- Crat/crat-tool warmup and process invocation with deterministic logs;
+- one initial immutable input-project copy, retaining `target/` when present;
+- mandatory in-place Crat `expand,unexpand` preparation without `split` or
+  `bin`;
+- the ordinary Crat `expand` cleanup correction that preserves every explicit
+  `[[bin]].path`;
+- the Crat skeleton-presentation amendment that forces every non-`ref`
+  binding to `mut` in both source and target snippets/signatures while
+  preserving `ref` and `ref mut` exactly;
+- corresponding updates to the existing in-memory Crat skeleton tests, with no
+  filesystem or CLI test added;
+- strict skeleton JSON integration loading;
 - one-time invocation of Phase 3 target-safety normalization and compilation of
   the normalized initial current project;
 - SCC-local function-name uniqueness checks;
 - function graph construction;
 - SCC computation;
 - deterministic leaf scheduling;
+- exact dependency-entry and transformation-target rendering;
 - dependency-context rendering;
 - breadth-first type closure;
 - 100,000-character dependency budget;
-- prompt construction;
-- LiteLLM client;
+- a versioned stage-local PROCTOR prompt;
+- PROCTOR `LlmClient`, `UsageTracker`, pricing, request metadata, and
+  StageOutput aggregation;
+- mandatory effective `context_overflow = "error"`;
 - code-block extraction;
 - validation invocation;
-- item replacement into a fresh project;
-- `cargo build`;
+- item replacement to a scratch source;
+- atomic candidate-source installation, `cargo build`, and rollback;
 - repair accounting;
-- project promotion and cleanup.
+- source promotion without per-attempt project copies;
+- byte-preserving `proctor.toml` and non-library project handling; and
+- final output copying with root `target/` excluded.
 
-Keep LiteLLM behind a replaceable client abstraction.
+Implement every case in `phase-4-test-plan.md`. Keep default Python tests
+offline and independent of the real Crat toolchain, Cargo, and provider APIs.
+Phase 4 adds no filesystem-changing Crat test. It updates existing in-memory
+Crat skeleton tests only for the presentation-mutability amendment. Python
+tests assert command construction, protocol handling, graph/context logic,
+transactions, and stage reporting without revalidating skeleton, validator,
+replacement, or Expand cleanup semantics.
 
 ### Phase 5: End-to-end evaluation
 
@@ -2770,6 +3249,8 @@ The following are intentionally outside this prototype:
   `Option<&mut [T]>`, instead of Phase 3's provisional null/empty
   correspondence;
 - boxed-slice and optional-boxed-slice wrapper input conversion;
-- integration with non-local transformation wrappers;
-- `proctor.toml` integration;
-- replacement of LiteLLM with the team's shared framework.
+- metadata-aware treatment of wrappers introduced by non-local
+  transformation;
+- reading or updating `proctor.toml` rather than preserving and ignoring it;
+- Cargo target layouts beyond the explicit self-contained forwarding bin; and
+- structured, token-aware prompt reduction after a provider context overflow.

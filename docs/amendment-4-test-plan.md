@@ -3,9 +3,9 @@
 ## 1. Purpose
 
 This document specifies the complete focused regression suite for Amendment
-Plan 4 in `prototype-plan.md`. It covers resolver-backed type-name selection,
-source-AST pointee reuse, semantic fallback rendering, standard
-`Option`/`Box` constructor safety, structured generation failure, and
+Plan 4 in [amendment-4-plan.md](amendment-4-plan.md). It covers resolver-backed
+type-name selection, source-AST pointee reuse, semantic fallback rendering,
+standard `Option`/`Box` constructor safety, structured generation failure, and
 compiler-backed insertion of generated types in the original module.
 
 The historical phase and amendment test plans are not edited. Existing

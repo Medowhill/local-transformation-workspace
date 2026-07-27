@@ -72,7 +72,8 @@ cargo test -p tools skeleton::tests
 
 Do not add a filesystem or CLI test for Crat's Expand cleanup. This document
 adds no new Crat test function and no live-provider or real-toolchain
-end-to-end test; Phase 5 owns evaluation against real programs.
+end-to-end test. Real-program evaluation follows a separate validation plan
+and is outside this document.
 
 Every default Python test is offline and deterministic. It may use
 `tmp_path`, read/write temporary project files, and invoke pure stage
@@ -1127,7 +1128,8 @@ string. This proves no conversation history or accumulated diagnostics.
 
 Use the exact `PromptRenderInput` from P4-PROMPT-02. Construct the expected
 string from the complete normative prompt body printed after the frontmatter
-in `prototype-plan.md` Section 10 by replacing:
+in [phase-4-plan.md](phase-4-plan.md#10-initial-llm-prompt-template) Section 10
+by replacing:
 
 ```text
 {{ dependency_context }} -> DEPENDENCY\n

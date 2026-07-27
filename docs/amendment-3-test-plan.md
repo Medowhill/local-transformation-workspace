@@ -3,10 +3,10 @@
 ## 1. Purpose
 
 This document specifies the complete focused regression suite for Amendment
-Plan 3 in `prototype-plan.md`. It covers resolved per-function foreign-name
-metadata, the final post-Amendment-2 skeleton-record shape, strict Python
-loading, name-only context rendering, dependency budgeting, and the final
-unreleased version-1 prompt presentation.
+Plan 3 in [amendment-3-plan.md](amendment-3-plan.md). It covers resolved
+per-function foreign-name metadata, the final post-Amendment-2 skeleton-record
+shape, strict Python loading, name-only context rendering, dependency
+budgeting, and the final unreleased version-1 prompt presentation.
 
 The historical phase and amendment test plans are not edited. Existing
 implementation tests whose expected JSON fields, helper records, context

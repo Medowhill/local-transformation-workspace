@@ -3,7 +3,8 @@
 ## 1. Purpose
 
 This document specifies the complete regression suite for Amendment Plan 2 in
-`prototype-plan.md`. It covers conservative statement classification,
+[amendment-2-plan.md](amendment-2-plan.md). It covers conservative statement
+classification,
 preservation-aware skeleton JSON, canonical validation and replacement,
 the final unreleased version-1 protocols and prompt text, and SCCs that require
 no LLM request.
@@ -1250,7 +1251,9 @@ labels, and Boolean/array inconsistency. Preserve Rust strings exactly.
 
 Use exact originating input A2-SRC-MIXED-CONTROL. Load prompt
 `local_transformation`, version 1. Construct the expected text by taking the
-complete historical Section 10 body and inserting exactly the Amendment 2
+complete historical Section 10 body in
+[phase-4-plan.md](phase-4-plan.md#10-initial-llm-prompt-template) and inserting
+exactly the Amendment 2
 paragraph at the specified boundary. Assert byte equality, content hash,
 frontmatter variables, and request metadata version 1. The exact insertion is:
 

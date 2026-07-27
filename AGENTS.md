@@ -2,7 +2,7 @@ You are an expert in Rust and Python.
 
 # Project-Specific Instructions
 
-* Read `research-plan.md` whenever you need to understand the goal of the entire
+* Read `docs/research-plan.md` whenever you need to understand the goal of the entire
   research project.
 * PROCTOR is the name of the entire research project, and `./proctor` is the
   top-level pipeline implementation.
@@ -12,7 +12,16 @@ You are an expert in Rust and Python.
   paths.
 * While PROCTOR includes various components, the purpose of this workspace is to
   focus on implementing the local transformation part.
-* Read `proctor-spec.md` whenever you need to understand the specification of
+* Read `docs/prototype-desc.md` first when working on the current
+  local-transformation prototype. Follow its link to `docs/prototype-plan.md`
+  for implementation history and read only the relevant detailed plan when
+  needed.
+* When a user-requested change updates the prototype implementation, keep
+  `docs/prototype-desc.md` accurate and well organized rather than merely
+  appending new information. Preserve its current level of detail, and use
+  judgment to omit documentation changes for minor implementation details that
+  do not materially affect the description.
+* Read `docs/proctor-spec.md` whenever you need to understand the specification of
   each component.
 * Treat planning-specific labels such as "phase", "amendment", `P1`, and `A1`
   as planning-document terminology only. Do not use them in the PROCTOR or Crat

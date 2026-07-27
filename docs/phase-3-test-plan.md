@@ -21,7 +21,8 @@ of the local-transformation prototype. It is the hand-over contract for:
 Phase 1 and the original Phase 2 implementation are complete. Do not modify
 `phase-1-test-plan.md` or `phase-2-test-plan.md`. Section 4 below specifies the
 required updates to existing Phase 1 and Phase 2 Rust tests and the additional
-regressions. Those updates implement the amendments in `prototype-plan.md`
+regressions. Those updates implement the amendments in
+[phase-3-plan.md](phase-3-plan.md)
 without rewriting either historical test plan.
 
 `unsupported.md` remains the conceptual input contract. Tests explicitly
@@ -131,7 +132,8 @@ parser-level header testing need only assert the documented parser or
 replacement result.
 
 All failure cases assert one of the six coarse `ReplacementErrorKind` variants
-from `prototype-plan.md` Section 16.2 plus item ID/path/name when available.
+from [phase-3-plan.md](phase-3-plan.md#162-versioned-replacement-request)
+Section 16.2 plus item ID/path/name when available.
 Messages identify the concrete observed construct for debugging. Do not test
 fine-grained subcodes or impose a validator-style total precedence. Repeated
 runs over the same input return the same coarse kind, item context, and

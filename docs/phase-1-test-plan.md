@@ -4,7 +4,8 @@
 
 This document specifies the complete automated test suite planned for Phase 1
 of the local-transformation prototype. Phase 1 implements the
-`crat-tool make-skeleton` operation described in `prototype-plan.md`.
+`crat-tool make-skeleton` operation described in
+[phase-1-plan.md](phase-1-plan.md).
 
 The tests cover:
 

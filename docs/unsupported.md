@@ -4,9 +4,9 @@
 
 This document consolidates the current conceptual unsupported-input contract
 for PROCTOR's local type-directed transformation prototype. It is derived from
-`prototype-plan.md`, the completed `phase-1-test-plan.md`,
-`phase-2-test-plan.md`, and the design decisions recorded while planning Phase
-2 and Phase 3.
+[prototype-desc.md](prototype-desc.md), the focused implementation tests, and
+the detailed historical plans linked from
+[prototype-plan.md](prototype-plan.md).
 
 “Unsupported” means that the local transformation is not intended to receive a
 project containing or requiring the listed feature. It does **not** mean that
@@ -16,7 +16,7 @@ or even successfully process an unsupported construct. Some component tests
 deliberately exercise such constructs to keep easy low-level behavior robust.
 
 No general supportedness checker or unsupported-feature normalization pass is
-required now. Phase 3's one-time safety-qualifier normalization is a separate
+implemented. The stage's one-time safety-qualifier normalization is a separate
 mechanical integration step and does not enforce this contract. A future tool
 may check this contract or rewrite selected unsupported constructs into
 supported forms.
@@ -43,14 +43,9 @@ The following project forms are unsupported:
 
 - A project that does not already pass `cargo build`.
 - A project that is not Rust 2021.
-- A project that has not reached the expected Crat pipeline point: `expand`
-  and `unexpand` have run, while `split` has not.
-- A project whose manifest does not identify exactly one library source path
-  for skeleton generation.
-- A project whose transformed library-crate source is not one physical source
-  file.
-- A project using external module declarations such as `mod foo;`. Inline
-  modules are supported and are traversed recursively.
+- A project whose manifest does not declare `[lib].path` as one relative,
+  root-level regular source file. Absolute paths, paths containing `..`, and
+  nested library paths are rejected.
 - A project with multiple logical Proctor targets, multiple transformed
   library crates, multiple build configurations, or a target kind other than
   an executable or `cdylib` library. The library-plus-generated-bin layout
@@ -62,6 +57,14 @@ The following project forms are unsupported:
 - A project requiring source selection through `cfg` or another build
   configuration that changes the item tree seen by the transformation.
 
+The stage copies the complete input project and itself runs ordinary Crat
+`expand` followed by `unexpand`. External module declarations such as
+`mod foo;` and their files may therefore be present in the stage input.
+Preparation must consolidate the transformed library into the declared
+root-level library file; skeleton generation then recursively traverses the
+resulting inline modules. The stage does not rerun Crat's `split` or `bin`
+passes.
+
 An executable is supported only in Crat's C2Rust layout: the Cargo project has
 the same one transformed library source plus one generated bin source that
 only calls the library's safe `main`. The bin source is not transformation
@@ -69,23 +72,23 @@ input. An executable-only Cargo target without that library source, an
 additional bin body requiring transformation, or another executable layout is
 unsupported.
 
-The prototype does not currently integrate wrapper metadata introduced by
-earlier non-local transformations. A project containing such pre-existing
-wrappers is therefore unsupported at this stage: the prototype cannot consume
-the `proctor.toml` metadata needed to identify, preserve, modify, or avoid
-them. Conceptually, functions known to be compatibility wrappers from
-non-local transformation are not local-transformation targets.
+The prototype copies but does not interpret or update `proctor.toml`. Merely
+having that file does not trigger rejection. An input is unsupported when it
+contains pre-existing compatibility wrappers whose identity must affect
+target selection or rewriting, because the stage cannot consume their
+metadata. Conceptually, functions known to be wrappers from non-local
+transformation are not local-transformation targets.
 
 ## 3. Unsupported item and function forms
 
 ### 3.1 Unsupported function forms
 
 Source-defined safe and unsafe free functions are both transformation targets.
-Phase 1 preserves source safety in source renderings, makes every target
-skeleton unsafe, and Phase 3 mechanically makes every source-defined free
-function except `main` unsafe before incremental replacement. Safety
-normalization traverses the single source file directly and does not consume
-skeleton JSON or inspect function signatures or bodies. The following
+Skeleton generation preserves source safety in source renderings and makes
+every target skeleton unsafe. Before incremental replacement, safety
+normalization mechanically makes every source-defined free function except
+`main` unsafe. It traverses the prepared library source directly and does not
+consume skeleton JSON or inspect function signatures or bodies. The following
 function forms remain unsupported:
 
 - `const fn`.
@@ -99,25 +102,28 @@ function forms remain unsupported:
 
 An explicit source ABI such as `extern "C"`, visibility, an export attribute,
 or `#[no_mangle]` is not unsupported by itself. The simultaneous
-`no_mangle`/`export_name` combination above is the exception. Phase 1
-sanitizes explicit ABI and `no_mangle` syntax only in presentation text and
-preserves the real project metadata for later wrapper handling.
+`no_mangle`/`export_name` combination above is the exception. Skeleton
+generation sanitizes explicit ABI and `no_mangle` syntax only in presentation
+text and preserves the real project metadata for later wrapper handling.
 
 Foreign function declarations and calls, including libc calls, are context
 rather than transformation targets. Their presence is not unsupported merely
 because they are foreign. Variadic foreign declarations such as `printf` are
 allowed; only body-bearing source-defined variadic free functions are
-unsupported. Foreign items are omitted from skeleton dependency context, so a
-project is unsupported if successful local translation would require
-transforming a foreign declaration or treating it as an ordinary local
-function target.
+unsupported. Foreign items do not become skeleton records or ordinary
+dependency entries, so a project is unsupported if successful local
+translation would require transforming a foreign declaration or treating it
+as an ordinary local function target. Resolved foreign-function declaration
+names are recorded as advisory prompt metadata for referring functions, but
+they do not become graph dependencies.
 
 ### 3.2 Executable `main` and `main_0`
 
-Phase 1 unconditionally omits every free function whose final identifier's
-symbol is `main`, including the surface spelling `r#main`, without inspecting
-its body. Omission is not a supportedness decision. A supported executable
-library contains exactly one co-located library-module pair of:
+Skeleton generation unconditionally omits every free function whose final
+identifier's symbol is `main`, including the surface spelling `r#main`,
+without inspecting its body. Omission is not a supportedness decision. A
+supported executable library contains exactly one co-located library-module
+pair of:
 
 - `unsafe fn main_0() -> core::ffi::c_int` and C2Rust's safe `pub fn main()`
   wrapper that calls it inside an unsafe block and exits; or
@@ -140,17 +146,18 @@ The following are unsupported:
 The two supported safe `main` wrappers are mechanically managed compatibility
 boundaries, not transformation targets. Their explicit unsafe blocks are
 allowed as the sole exception to the general explicit-unsafe-block
-restriction. For the two-argument form, Phase 3 replaces `main` with the fixed
-implementation specified in `prototype-plan.md`; the generated Cargo bin shim
-remains unchanged.
+restriction. For the two-argument form, item replacement uses the fixed
+implementation summarized in the
+[prototype description](prototype-desc.md#replacement-and-compatibility); the
+generated Cargo bin shim remains unchanged.
 
-Phase 1 and Phase 3 recognize these cases using only final identifier symbols
-and `main_0` arity. A zero-argument `main_0` leaves its co-located sibling
-`main` unchanged; a two-argument `main_0` receives the forced target `argv`
-type and causes that sibling `main` to be replaced mechanically. Recognition
-does not inspect safety, parameter names or types, return type, visibility,
-ABI, attributes, or either body. The exact forms above remain a
-supported-input assumption rather than a recognition check.
+Skeleton generation and item replacement recognize these cases using only
+final identifier symbols and `main_0` arity. A zero-argument `main_0` leaves
+its co-located sibling `main` unchanged; a two-argument `main_0` receives the
+forced target `argv` type and causes that sibling `main` to be replaced
+mechanically. Recognition does not inspect safety, parameter names or types,
+return type, visibility, ABI, attributes, or either body. The exact forms
+above remain a supported-input assumption rather than a recognition check.
 
 ### 3.3 Traits, impls, and dispatch
 
@@ -182,9 +189,9 @@ Concrete uses of already-defined generic types, such as `Option<i32>`,
 `Box<MyType>`, slices, and standard collections, are not unsupported merely
 because their type constructor is generic.
 
-Phase 1 may generate named lifetime parameters in a **target** signature when
-pointer analysis selects related borrowed types. Those generated target
-lifetimes do not make source-written generics supported.
+Skeleton generation may introduce named lifetime parameters in a **target**
+signature when pointer analysis selects related borrowed types. Those
+generated target lifetimes do not make source-written generics supported.
 
 ### 3.5 Closures and callable values
 
@@ -196,9 +203,9 @@ The following are unsupported in the source project:
 - Callbacks represented directly as function pointers.
 - Callback encodings passed through `void *`.
 
-Phase 2 validation understands closure-parameter binding names in a returned
-snippet so it can enforce generated-temporary naming consistently. That
-low-level validator behavior does not make source closures supported.
+Structural validation understands closure-parameter binding names in a
+returned snippet so it can enforce generated-temporary naming consistently.
+That low-level validator behavior does not make source closures supported.
 
 ### 3.6 Function-local items
 
@@ -208,12 +215,12 @@ recursively at every statement-list depth. This includes local `const`,
 unions, modules, traits, impls, foreign blocks, `use`, `extern crate`, macro
 definitions, and item-position macro invocations.
 
-Phase 1 rejects a transformation target as soon as recursive statement
-labeling encounters such an item and does not label or enter the item's
-initializer or body. Phase 2 rejects every function-local item in both an
-expected skeleton and a returned transformation. Expression- and
-statement-position macro invocations are expressions/statements rather than
-item declarations and remain governed by Section 3.7.
+Skeleton generation rejects a transformation target as soon as recursive
+statement labeling encounters such an item and does not label or enter the
+item's initializer or body. Structural validation rejects every function-local
+item in both an expected skeleton and a returned transformation. Expression-
+and statement-position macro invocations are expressions/statements rather
+than item declarations and remain governed by Section 3.7.
 
 ### 3.7 Macros, conditional compilation, and generated items
 
@@ -230,18 +237,18 @@ The following are unsupported:
 Ordinary expression- or statement-position macro invocations are supported
 only when their source token input contains no call expression. C2Rust macros
 are expected to have been expanded before this stage, while `unexpand` may
-restore selected expression macros. Phase 1 treats a standalone macro
-statement as a labeled expression hole. For example, `println!("hello")` is
-supported, while `println!("{}", local_fn())` is unsupported. Calls introduced
-internally by macro expansion do not violate this source-token restriction.
-Expanded-HIR dependency collection may still observe a source call nested in a
-macro input, but Phase 3 cannot reliably redirect that call in the unexpanded
-surface AST.
+restore selected expression macros. Skeleton generation treats a standalone
+macro statement as a labeled expression hole. For example, `println!("hello")`
+is supported, while `println!("{}", local_fn())` is unsupported. Calls
+introduced internally by macro expansion do not violate this source-token
+restriction. Expanded-HIR dependency collection may still observe a source
+call nested in a macro input, but item replacement cannot reliably redirect
+that call in the unexpanded surface AST.
 
 Ordinary `derive`, `repr`, and other supported item attributes are preserved.
 A derive is supported only under the assumption that every generated HIR item
-is recognized by `TyCtxt::is_automatically_derived`, allowing Phase 1 to skip
-it without disturbing surface/HIR alignment.
+is recognized by `TyCtxt::is_automatically_derived`, allowing skeleton
+generation to skip it without disturbing surface/HIR alignment.
 
 ## 4. Unsupported bindings and patterns
 
@@ -250,12 +257,13 @@ The following source binding forms are unsupported:
 - By-reference binding modes written with `ref` or `ref mut`.
 - Any parameter pattern other than one identifier, as stated in Section 3.1.
 
-This does not mean that the Phase 1 or Phase 2 components are unable to
-represent `ref`. Skeleton generation mechanically preserves `ref` and makes
-`ref x` into `ref mut x` in the target skeleton; validation preserves
-by-value-versus-`ref` mode while ignoring only `mut`. The Phase 2 tests retain
-this component-level behavior, but the pointer analysis does not support
-source `ref` bindings for the local transformation prototype.
+This does not mean that the low-level components are unable to represent
+`ref`. Skeleton generation preserves `ref` and `ref mut` exactly while making
+non-`ref` bindings mutable in prompt-facing presentations. Validation
+preserves by-value-versus-`ref` mode and the referenced binding identities
+while ignoring ordinary `mut`. This component behavior does not change the
+prototype-level restriction because pointer analysis does not support source
+`ref` bindings.
 
 Outside parameters and `ref` binding mode, existing local-pattern structure is
 supported and preserved. This includes simple and destructuring `let`,
@@ -273,13 +281,13 @@ including nested blocks:
 - Source statement attributes.
 - Source expression attributes.
 - Pre-existing `#[proctor(...)]` statement labels. These are generated by
-  Phase 1, not supplied by the source project.
+  skeleton generation, not supplied by the source project.
 - Explicit `unsafe { ... }` blocks.
 
 Unsafe operations themselves are supported directly inside an `unsafe fn`.
 The unsupported feature is an explicit nested unsafe block in a transformation
 target. The two supported, excluded C2Rust `main` wrappers are the sole
-source-input exception, and Phase 3's fixed replacement `main` also contains a
+source-input exception, and the fixed replacement `main` also contains a
 trusted unsafe block.
 
 Attributes on a function-local item do not create an exception: the enclosing
@@ -287,8 +295,8 @@ item statement is unsupported independently of its attributes.
 
 ### 5.1 Control expressions beneath non-control wrappers
 
-A control or plain-block expression is supported only when it is the root of
-one of these structural roles:
+A control or plain-block expression is normally supported only when it is the
+root of one of these structural roles:
 
 - an expression or semicolon statement;
 - a direct `let` initializer;
@@ -296,10 +304,24 @@ one of these structural roles:
 - the direct value of `break`; or
 - a supported match-arm block tail.
 
-An input is unsupported when an `if`, `if let`, `while`, `while let`, `for`,
-`loop`, `match`, or plain block that needs structural preservation occurs
-beneath a non-control expression wrapper. Unsupported intervening wrappers
-include:
+The one exception is an ordinary `if` used like a C conditional expression. It
+may occur beneath a non-control wrapper when all of the following hold:
+
+- it is an ordinary `if`, not `if let`;
+- it has an `else`;
+- its condition contains neither control expressions nor a `let` expression;
+- each branch contains exactly one tail expression and no other statements;
+  and
+- any control expression in a branch tail is recursively another conditional
+  of this same restricted form.
+
+This restricted conditional is opaque: its interior receives no statement
+labels and remains part of the enclosing statement region.
+
+Except for that form, an input is unsupported when an `if`, `if let`, `while`,
+`while let`, `for`, `loop`, `match`, or plain block that needs structural
+preservation occurs beneath a non-control expression wrapper. Unsupported
+intervening wrappers include:
 
 - calls or method calls;
 - constructors;
@@ -369,7 +391,8 @@ supports compatibility wrappers only for the following conversions.
 From a raw-pointer source parameter to a target parameter:
 
 - references and optional references;
-- slices, using the provisional null-to-empty and fixed-bound behavior;
+- slices, using the provisional null-to-empty behavior and a fixed
+  1,000,000-element bound;
 - scalar boxes and optional scalar boxes; and
 - raw pointers.
 
@@ -389,6 +412,21 @@ Structurally identical nonpointer parameters and returns pass through. Any
 other signature change, including a custom-type conversion, is unsupported.
 Exported-global wrappers are unsupported.
 
+### 6.4 Synthesized type spelling
+
+An input is unsupported when a pointer-analysis decision requires generated
+type syntax that cannot be named from the target function's containing
+module. Skeleton generation fails atomically rather than emitting invalid
+Rust.
+
+In particular, introduced bare `Option` and `Box` constructors require the
+ordinary prelude and must resolve to the standard language items. Shadowing,
+`#![no_implicit_prelude]`, an inaccessible type, or another unavailable path
+is unsupported when it prevents a required target type from being spelled.
+Existing source type syntax is reused and shortened by resolved identity where
+possible, so these features are not independently unsupported when no
+unspellable type must be synthesized.
+
 ## 7. Unsupported graph, naming, and size cases
 
 The following orchestration cases are unsupported:
@@ -397,23 +435,23 @@ The following orchestration cases are unsupported:
   identifier, even when their full module paths differ. Validation requests
   match functions by final name and require names to be unique within the
   request.
-- An SCC whose mandatory direct dependency context alone exceeds 100,000
-  rendered characters. The orchestrator aborts rather than omitting a direct
-  dependency.
+- An SCC whose mandatory context—recursive SCC-member signatures plus all
+  direct dependencies—exceeds 100,000 rendered characters. The orchestrator
+  aborts rather than omitting a mandatory entry.
 - A case that requires modifying functions outside the current SCC to make one
   replacement attempt structurally valid before the normal wrapper/call-site
   migration can occur, other than the specified mechanical replacement of
-  executable `main`. The one-time Phase 3 safety normalization happens before
+  executable `main`. The one-time safety normalization happens before
   SCC processing and is not an SCC repair.
 
 Direct recursion and mutually recursive SCCs are not unsupported. They are
-explicitly part of the planned SCC and item-replacement behavior.
+explicitly part of the implemented SCC and item-replacement behavior.
 
 The 100,000-character limit applies to rendered dependency context, not to
 transformation targets, instructions, diagnostics, or prior failed code.
 Deeper transitive type-dependency levels may be omitted only by the documented
-breadth-first whole-depth budget policy; mandatory direct dependencies may not
-be silently omitted.
+breadth-first whole-depth budget policy; mandatory context entries may not be
+silently omitted.
 
 ## 8. Context items that are not transformation targets
 
@@ -423,8 +461,8 @@ local transformation targets or independent skeleton records:
 - Inline modules, which are traversed recursively.
 - Top-level `extern crate` and `use` items.
 - Foreign modules, foreign functions, foreign statics, and foreign types.
-- Every free function named `main`, which Phase 1 omits unconditionally; only
-  the two forms in Section 3.2 are supported input.
+- Every free function named `main`, which skeleton generation omits
+  unconditionally; only the two forms in Section 3.2 are supported input.
 - Top-level `GlobalAsm`.
 - Struct fields, enum variants, and constructors; their containing named type
   is the dependency identity.
@@ -441,22 +479,21 @@ The following component-level behavior is intentional. It either implements a
 supported case or keeps a low-level component robust, but does not by itself
 widen the supported input language:
 
-- Phase 1 explicitly diagnoses empty statements, non-block match arms, and
-  control expressions beneath non-control wrappers.
-- Phase 1 skeleton generation handles `ref` bindings mechanically.
-- Phase 1 emits unsafe target headers for safe source functions; safe source
-  functions are supported, but `const fn` remains unsupported.
-- Phase 1 omits every free function named `main` without validating that its
-  body is one of the two supported executable forms.
-- Phase 1 forces the supported two-argument `main_0` `argv` target type instead
-  of following its ordinary pointer-analysis decision, recognizing the case
-  only by the `main_0` identifier symbol and arity two.
-- Phase 1 rejects every parsed function-local item before labeling or
-  traversing it.
-- Phase 2 validates binding identity, structural position, and
+- Skeleton generation explicitly diagnoses empty statements, non-block match
+  arms, function-local items, and unsupported control expressions beneath
+  non-control wrappers.
+- Skeleton generation handles `ref` bindings mechanically.
+- Skeleton generation emits unsafe target headers for safe source functions;
+  safe source functions are supported, but `const fn` remains unsupported.
+- Skeleton generation omits every free function named `main` without
+  validating that its body is one of the two supported executable forms.
+- Skeleton generation forces the supported two-argument `main_0` `argv` target
+  type instead of following its ordinary pointer-analysis decision,
+  recognizing the case only by the `main_0` identifier symbol and arity two.
+- Structural validation checks binding identity, structural position, and
   by-value-versus-`ref` mode for `ref` patterns.
-- Phase 2 checks generated bindings in closure parameters even though source
-  closures are unsupported.
+- Structural validation checks generated bindings in closure parameters even
+  though source closures are unsupported.
 - The parser-only validator may accept Rust that would later fail name
   resolution or type checking; successful parsing is not a supportedness
   decision.
@@ -474,7 +511,7 @@ for the unsupported constructs below. Future work may:
 
 - implement a dedicated supportedness checker;
 - report every unsupported construct with source locations;
-- hoist control expressions out of non-control wrappers;
+- hoist unsupported control expressions out of non-control wrappers;
 - eliminate or normalize `ref` bindings;
 - normalize non-block match arms and empty statements;
 - split or rewrite function-local items;

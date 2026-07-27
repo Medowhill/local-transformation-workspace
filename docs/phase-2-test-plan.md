@@ -100,7 +100,8 @@ ID/name and the pretty-printed matched function. A parent association failure
 suppresses dependent descendant errors as described by the individual cases.
 
 Binding-location assertions use the structural-position model from
-`prototype-plan.md` Section 13.1. In particular, compare the expected
+[phase-2-plan.md](phase-2-plan.md#131-existing-identifiers) Section 13.1. In
+particular, compare the expected
 declaration anchor and the complete pattern-child path, including tuple or
 tuple-struct index, struct field, slice position, `@` binder/subpattern role,
 `or` alternative, and reference/parenthesized wrapper. Generated sibling
@@ -3739,7 +3740,10 @@ unexpected_body_attribute
 branch, match arm, `let-else` body, plain-block body, loop body, or other
 preserved structural statement list. It replaces a derivative
 missing-plus-unexpected-label pair. Same-category ordering and cascade
-suppression follow the table in `prototype-plan.md` Section 14.8.
+suppression follow the Section 14.8 table in
+[phase-2-plan.md](phase-2-plan.md#148-error-aggregation-and-precedence), as
+updated by the precedence rows in
+[phase-3-plan.md](phase-3-plan.md#validator-and-replacement-integration).
 `existing_item_structure_mismatch` is used only after a unique local `const` or
 `static` has been associated with its expected location; it reports a
 structural difference without also treating that declaration as missing or

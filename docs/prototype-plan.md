@@ -10,10 +10,11 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Each phase or amendment below denotes a set of tasks performed together.
+Phases 1--4 and Amendments 1--4 denote sets of tasks performed together.
 Ownership follows when work was done, not which component was affected. A fix
 to skeleton generation made while implementing a later phase therefore remains
-part of that later phase.
+part of that later phase. Amendment 5 is a prospective plan and is marked as
+such until its implementation is complete.
 
 Substantive text from the former consolidated plan is preserved in the linked
 detailed files. Imperative and future-tense wording in those files is
@@ -112,3 +113,19 @@ selection, and atomic errors when a type cannot be spelled correctly.
 
 - [Detailed Amendment 4 plan](amendment-4-plan.md)
 - [Amendment 4 test plan](amendment-4-test-plan.md)
+
+## Amendment 5 (planned)
+
+This planned work adds a human-readable diagnostic artifact containing the
+prompt-facing before statement, build-accepted canonical after expansion
+group, and source/selected target types of relevant existing raw-pointer
+bindings for every transformation-required statement. Binding rows have
+stable human origins, incomplete compiler mappings are marked explicitly, and
+canonical statement labels remain visible in the snippets. It deliberately
+does not extract or apply reusable rules.
+
+This entry must be changed to completed/historical wording only after the
+implementation and current-description document are updated.
+
+- [Detailed Amendment 5 plan](amendment-5-plan.md)
+- [Amendment 5 test plan](amendment-5-test-plan.md)

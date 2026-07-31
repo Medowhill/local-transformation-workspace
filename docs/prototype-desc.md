@@ -72,11 +72,12 @@ For one stage invocation, the implementation:
 8. constructs the function graph and a deterministic leaf-first SCC schedule;
 9. processes each SCC mechanically or with an LLM;
 10. structurally validates LLM output when an LLM was used;
-11. asks Crat to produce a complete candidate library source;
-12. installs and builds the candidate transactionally, retaining it only on
-    success; and
-13. copies the final project to the declared output, excluding only the
-    root-level `target/` directory.
+11. asks Crat to produce a complete candidate library source and a canonical
+    statement-pair sidecar;
+12. validates, installs, and builds the candidate transactionally, retaining
+    its source and statement pairs only on success; and
+13. copies the final project to the declared output and publishes the
+    statement-pair report.
 
 The initial input copy retains an existing `target/`. Candidate builds also
 retain their changes to `target/` after a source rollback. Earlier successful
@@ -97,12 +98,12 @@ not be absolute or escape the crate root.
   compiling a project;
 - `normalize-safety` rewrites one Rust source file; and
 - `replace` compiles the current project for name resolution and writes one
-  complete candidate source file.
+  complete candidate source file and one canonical statement-pair sidecar.
 
 Filesystem I/O and command dispatch remain thin CLI responsibilities.
 Skeleton generation, validation, preservation, and replacement are in the
-Crat `tools` library. SCC scheduling, LLM use, build transactions, and repair
-remain in the Python stage.
+Crat `tools` library. SCC scheduling, LLM use, sidecar acceptance, build
+transactions, repair, and report rendering remain in the Python stage.
 
 ## Skeleton and analysis model
 
@@ -327,10 +328,19 @@ source to a rollback file, atomically installs the candidate, and runs
 On success, the candidate remains current and the rollback is removed. On a
 build failure or builder exception, the previous library source is restored.
 Failure to restore is fatal. Only the root library source is rolled back;
-Cargo build artifacts remain.
+Cargo build artifacts remain. Each replacement attempt also writes a scratch
+sidecar. The stage validates it before candidate installation and retains its
+canonical groups only after a successful build.
 
-Success copies the final current project to the declared output. Failure
-reports no usable Rust-project output.
+Success copies the final current project and publishes a deterministic
+`statement-pairs.md` under `outputs.artifacts_dir`, or under
+`framework.workdir` when no artifact directory is present. Ordered by item and
+statement, the report pairs prompt-facing source statements with accepted
+canonical replacements and relevant source and target pointer types; it warns
+when binding metadata is incomplete. A stale report is cleared at invocation
+start, and final copying and publication are one cleanup transaction. Failure
+reports no usable outputs. The report is diagnostic and does not extract or
+apply reusable rules.
 
 The stage output reports:
 

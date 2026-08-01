@@ -6,14 +6,17 @@ This document is a concise guide to the work that produced the
 local-transformation prototype. It records implementation history, not the
 current component contract.
 
+Keep the prose summary under each phase or amendment heading to at most five
+Markdown source lines; the following list of links to other files is excluded.
+
 Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--4 and Amendments 1--5 denote sets of tasks performed together.
-Ownership follows when work was done, not which component was affected. A fix
-to skeleton generation made while implementing a later phase therefore remains
-part of that later phase.
+Phases 1--4 and Amendments 1--5 denote historical sets of tasks performed
+together. Phase 5 is prospective. Ownership follows when work was done, not
+which component was affected. A fix to skeleton generation made while
+implementing a later phase therefore remains part of that later phase.
 
 Substantive text from the former consolidated plan is preserved in the linked
 detailed files. Imperative and future-tense wording in those files is
@@ -115,13 +118,21 @@ selection, and atomic errors when a type cannot be spelled correctly.
 
 ## Amendment 5
 
-This work added a human-readable diagnostic artifact containing the
-prompt-facing before statement, build-accepted canonical after expansion
-group, and source/selected target types of relevant existing raw-pointer
-bindings for every transformation-required statement. Binding rows have
-stable human origins, incomplete compiler mappings are marked explicitly, and
-canonical statement labels remain visible in the snippets. It deliberately
-does not extract or apply reusable rules.
+This work added a human-readable diagnostic pairing prompt-facing source
+statements with build-accepted canonical target groups and relevant raw-pointer
+binding types. It preserves statement labels and reports incomplete compiler
+mappings, but does not extract or apply reusable rules.
 
 - [Detailed Amendment 5 plan](amendment-5-plan.md)
 - [Amendment 5 test plan](amendment-5-test-plan.md)
+
+## Phase 5: Validated expression observation collection (planned)
+
+Phase 5 will collect structured expression observations from accepted SCCs by
+expanding raw-pointer-variable regions and aligning them with target expressions.
+Replacement also emits a separate labeled analysis source containing old and
+new functions while leaving the validated candidate unchanged. The phase does
+not synthesize or apply rules and leaves the statement-pair report unchanged.
+
+- [Detailed Phase 5 plan](phase-5-plan.md)
+- No separate test-plan document has been written yet.

@@ -128,11 +128,11 @@ mappings, but does not extract or apply reusable rules.
 
 ## Phase 5: Validated expression observation collection (planned)
 
-Phase 5 will collect structured expression observations from accepted SCCs by
-expanding raw-pointer-variable regions and aligning them with target expressions.
-Replacement also emits a separate labeled analysis source containing old and
-new functions while leaving the validated candidate unchanged. The phase does
-not synthesize or apply rules and leaves the statement-pair report unchanged.
+Phase 5 will extract normalized, typed source/target expression observations
+from build-accepted SCCs using a separate labeled observation source and retained
+logical-function correspondence. It leaves candidate and statement-pair bytes
+unchanged, publishes versioned `observations.json`, and does not synthesize or
+apply rules.
 
 - [Detailed Phase 5 plan](phase-5-plan.md)
-- No separate test-plan document has been written yet.
+- [Phase 5 test plan](phase-5-test-plan.md)

@@ -13,10 +13,10 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--4 and Amendments 1--5 denote historical sets of tasks performed
-together. Phase 5 is prospective. Ownership follows when work was done, not
-which component was affected. A fix to skeleton generation made while
-implementing a later phase therefore remains part of that later phase.
+Phases 1--5 and Amendments 1--5 denote historical sets of tasks performed
+together. Ownership follows when work was done, not which component was
+affected. A fix to skeleton generation made while implementing a later phase
+therefore remains part of that later phase.
 
 Substantive text from the former consolidated plan is preserved in the linked
 detailed files. Imperative and future-tense wording in those files is
@@ -126,12 +126,12 @@ mappings, but does not extract or apply reusable rules.
 - [Detailed Amendment 5 plan](amendment-5-plan.md)
 - [Amendment 5 test plan](amendment-5-test-plan.md)
 
-## Phase 5: Validated expression observation collection (planned)
+## Phase 5: Validated expression observation collection
 
-Phase 5 will extract normalized, typed source/target expression observations
-from build-accepted SCCs using a separate labeled observation source and retained
-logical-function correspondence. It leaves candidate and statement-pair bytes
-unchanged, publishes versioned `observations.json`, and does not synthesize or
+Phase 5 added normalized, typed source/target expression observations from
+build-accepted SCCs using a separate labeled observation source and retained
+logical-function correspondence. It left candidate and statement-pair bytes
+unchanged, published versioned `observations.json`, and did not synthesize or
 apply rules.
 
 - [Detailed Phase 5 plan](phase-5-plan.md)

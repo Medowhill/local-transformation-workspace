@@ -73,11 +73,14 @@ For one stage invocation, the implementation:
 9. processes each SCC mechanically or with an LLM;
 10. structurally validates LLM output when an LLM was used;
 11. asks Crat to produce a complete candidate library source and a canonical
-    statement-pair sidecar;
+    statement-pair sidecar, plus a separate labeled observation source and
+    digest-bound correspondence metadata;
 12. validates, installs, and builds the candidate transactionally, retaining
-    its source and statement pairs only on success; and
-13. copies the final project to the declared output and publishes the
-    statement-pair report.
+    its source and statement pairs only on success;
+13. extracts typed expression observations from the labeled source only after
+    the candidate build succeeds; and
+14. copies the final project to the declared output and publishes the
+    statement-pair report and `observations.json`.
 
 The initial input copy retains an existing `target/`. Candidate builds also
 retain their changes to `target/` after a source rollback. Earlier successful
@@ -91,14 +94,18 @@ the root `target/`; it removes obsolete Rust source files before writing the
 expanded library source. Explicit bin paths are lexically normalized and may
 not be absolute or escape the crate root.
 
-`crat-tool` exposes four operations:
+`crat-tool` exposes five operations:
 
 - `make-skeleton` compiles the prepared library and writes JSON item records;
 - `validate` parses a validation request and returned Rust snippets without
   compiling a project;
-- `normalize-safety` rewrites one Rust source file; and
+- `normalize-safety` rewrites one Rust source file;
 - `replace` compiles the current project for name resolution and writes one
-  complete candidate source file and one canonical statement-pair sidecar.
+  complete candidate source file, one canonical statement-pair sidecar, a
+  separate labeled observation source, and digest-bound correspondence
+  metadata; and
+- `extract-observations` compiles only the labeled observation source and
+  writes a versioned closed observation document.
 
 Filesystem I/O and command dispatch remain thin CLI responsibilities.
 Skeleton generation, validation, preservation, and replacement are in the
@@ -332,15 +339,26 @@ Cargo build artifacts remain. Each replacement attempt also writes a scratch
 sidecar. The stage validates it before candidate installation and retains its
 canonical groups only after a successful build.
 
-Success copies the final current project and publishes a deterministic
-`statement-pairs.md` under `outputs.artifacts_dir`, or under
-`framework.workdir` when no artifact directory is present. Ordered by item and
-statement, the report pairs prompt-facing source statements with accepted
-canonical replacements and relevant source and target pointer types; it warns
-when binding metadata is incomplete. A stale report is cleared at invocation
-start, and final copying and publication are one cleanup transaction. Failure
-reports no usable outputs. The report is diagnostic and does not extract or
-apply reusable rules.
+The ordinary candidate and statement-pair sidecar are unchanged by observation
+collection. After each SCC candidate builds successfully, Crat uses a separate
+labeled source and explicit callable correspondence to extract normalized,
+typed source/target expression observations. Unsupported regions are skipped
+conservatively; protocol, compiler, and correspondence inconsistencies are
+fatal. Failed or superseded attempts contribute no observations.
+
+Success copies the final current project and publishes deterministic
+`statement-pairs.md` and `observations.json` artifacts under
+`outputs.artifacts_dir`, or under `framework.workdir` when no artifact directory
+is present. Ordered by item and statement, the report pairs prompt-facing
+source statements with accepted canonical replacements and relevant source and
+target pointer types; it warns when binding metadata is incomplete. A stale
+report is cleared at invocation start, and final copying and publication are one
+cleanup transaction. Failure reports no usable outputs. The report is
+diagnostic and does not extract or apply reusable rules.
+
+The observations artifact is published even when no observations were
+collected, preserves producer order and duplicates, and is not a stage log.
+Scratch observation sources and metadata never enter the output project.
 
 The stage output reports:
 

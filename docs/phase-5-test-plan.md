@@ -43,23 +43,24 @@ All assertions reflect the settled Phase 5 contracts.
 ## 2. Execution and comparison policy
 
 Rust tests belong beside `skeleton`, `item_replacer`, and the new `observation`
-module, with thin CLI tests in `src/bin/crat-tool.rs`. Never nest rustc compiler
-callbacks; return owned source, metadata, or wire values first. Run from
-`proctor/stages/crat`:
+module. They exercise the tools library with source-string compiler inputs and
+must not invoke `crat-tool`, mutate filesystem state, or use a project-root
+`tests/` directory. Command-boundary behavior remains covered by PROCTOR's
+offline tool tests. Never nest rustc compiler callbacks; return owned source,
+metadata, or wire values first. Run from `proctor/stages/crat`:
 
 ```bash
 cargo test -p tools skeleton::tests
 cargo test -p tools item_replacer::tests
 cargo test -p tools observation::tests
 cargo test -p tools
-cargo test --bin crat-tool
 cargo test --workspace
 cargo fmt
 cargo clippy --workspace --all-targets
 ```
 
 Python tests remain offline in `proctor/tests/test_local_transformation.py` and
-use fake Crat/Cargo/LLM boundaries. Run from `proctor`:
+run from `proctor`:
 
 ```bash
 uv run pytest tests/test_local_transformation.py
@@ -162,6 +163,10 @@ unsafe fn read(mut pointer: &i32) -> i32 {
 
 Expected result for the two-module input:
 
+- Scheduling: the duplicate-name invariant remains unchanged, so the two
+  functions are exercised as two one-item SCC/replacement requests. The
+  `a::read` result becomes the current source and accepted correspondence for
+  the subsequent `b::read` request; they are never submitted together.
 - Generated paths: `a::read` gets source copy
   `a::__proctor_source_read_1` and wrapper
   `a::__proctor_wrapper_read_0`; `b::read` gets
@@ -660,8 +665,10 @@ Expected result:
   `*mut i32`, and its target/target-adjusted expression types are `&mut i32`.
   Label 1 emits one record whose anchor `<id0>` has the same binding types and
   whose four expression types are `i32`.
-- Fatal mutations: changed declaration label/symbol, one-sided annotation, or
-  either annotation disagreeing with its own compiler-resolved binding type.
+- Fatal mutations: changed declaration label/symbol, missing target annotation,
+  or either present annotation disagreeing with its own compiler-resolved
+  binding type. The source annotation may be absent only in the inferred-source
+  case covered by CORR-06.
 
 ### P5-CORR-03 `shadowed_locals_remain_distinct`
 
@@ -704,14 +711,16 @@ Expected result:
     label-0 local)
   - label 3: `*alias` -> `*alias`
   - label 4: `*alias` -> `*alias`
-- Observations: labels 0 and 2 each emit one record whose `pointer` anchor has
-  binding types `*mut i32` -> `&mut i32`; its source/source-adjusted expression
-  types are `*mut i32`, and its target/target-adjusted expression types are
-  `&mut i32`. Labels 3 and 4 each emit one record whose `alias` anchor has the
-  same binding-type pair and whose four expression types are `i32`. In every
-  observation the sole anchor is `<id0>`; the inner and outer `alias` bindings
-  remain distinct compiler identities even though observation-local numbering
-  resets for each record.
+- Observations: label 0 emits one record whose `pointer` anchor has binding
+  types `*mut i32` -> `&mut i32`; its source/source-adjusted expression types
+  are `*mut i32`, and its target/target-adjusted expression types are
+  `&mut i32`. Label 2 is structurally aligned, but its target uses the paired
+  outer `alias`, whose source binding did not occur in the selected source
+  expression. Dumping therefore conservatively discards it without allocating
+  a target-only binding ID or conflating it with pointer `<id0>`. Labels 3 and
+  4 each emit one record whose `alias` anchor has the same binding-type pair
+  and whose four expression types are `i32`. The total is three records in
+  label order 0, 3, 4; each sole anchor is observation-local `<id0>`.
 
 ### P5-CORR-04 `source_only_reference_is_allowed`
 
@@ -799,8 +808,10 @@ Expected result:
   `*mut i32`, and its target/target-adjusted expression types are `&mut i32`.
   Label 1 emits one record with the same anchor binding types and four `i32`
   expression type fields.
-- Fatal mutations: absent/wrong target annotation or any unexpected source
-  annotation/type combination.
+- Fatal mutations: absent target annotation, a target annotation that disagrees
+  with the compiler binding type, or a present source annotation that disagrees
+  with its compiler binding type. An inferred source plus explicit valid target
+  is the intended successful combination.
 
 ## 5. Statement selection, regions, and alignment
 
@@ -812,7 +823,7 @@ unsafe fn source_copy(mut pointer: *const i32) -> i32 {
     #[proctor(1)] value + *pointer
 }
 unsafe fn target(mut pointer: &i32) -> i32 {
-    #[proctor(0)] let value = 1;
+    #[proctor(0)] let value: i32 = 1;
     #[proctor(1)] value + *pointer
 }
 ```
@@ -1481,7 +1492,7 @@ unsafe fn source_copy(mut pointer: *mut bool) {
 }
 unsafe fn target(mut pointer: &mut bool) {
     #[proctor(0)] *pointer &= true;
-    #[proctor(1)] let value = !*pointer;
+    #[proctor(1)] let value: bool = !*pointer;
 }
 ```
 
@@ -1709,7 +1720,8 @@ Expected result for the aliased form:
 - Type converter returns nested `adt` nodes: outer `Option` has
   `adt_kind:"enum"`, canonical defining crate/path, and one argument; that
   argument is `Box` with `adt_kind:"struct"`, canonical defining crate/path,
-  and primitive `i32`. No alias/import spelling occurs. The function's label
+  primitive `i32`, and rustc's representable default allocator argument
+  `alloc::alloc::Global`. No alias/import spelling occurs. The function's label
   has no pointer occurrence in its expression, so it emits zero observations.
 - Exact alignment:
   - label 0: no alignment (no eligible anchor)
@@ -1726,7 +1738,15 @@ The exact normalized ADT subtree is:
       "kind": "adt",
       "adt_kind": "struct",
       "identity": {"kind": "external", "crate": "alloc", "path": ["boxed", "Box"]},
-      "arguments": [{"kind": "primitive", "name": "i32"}]
+      "arguments": [
+        {"kind": "primitive", "name": "i32"},
+        {
+          "kind": "adt",
+          "adt_kind": "struct",
+          "identity": {"kind": "external", "crate": "alloc", "path": ["alloc", "Global"]},
+          "arguments": []
+        }
+      ]
     }
   ]
 }
@@ -2399,7 +2419,7 @@ pub unsafe fn read(mut pointer: *const i32) -> i32 { *pointer }
 Exact companion bytes are candidate
 `pub unsafe fn read(mut pointer: &i32) -> i32 { *pointer }\n`, statement sidecar
 `{"schema_version":1,"statements":[{"item_id":7,"path":"read","label":0,"after_statement":"*pointer"}]}\n`, and observation source
-`unsafe fn source_copy(mut pointer: *const i32) -> i32 { #[proctor(0)] *pointer }\nunsafe fn read(mut pointer: &i32) -> i32 { #[proctor(0)] *pointer }\n`.
+`unsafe fn __proctor_source_read(mut pointer: *const i32) -> i32 { #[proctor(0)] *pointer }\nunsafe fn read(mut pointer: &i32) -> i32 { #[proctor(0)] *pointer }\npub unsafe fn __proctor_wrapper_read(mut pointer: *const i32) -> i32 {\n    let __proctor_result = crate::read(&*(pointer as *const i32));\n    __proctor_result\n}\n`.
 The request has item 7/path `read`, transform labels `[0]`, and accepted
 correspondence `[]`. Exact valid metadata:
 
@@ -2408,7 +2428,7 @@ correspondence `[]`. Exact valid metadata:
   "schema_version": 1,
   "candidate_sha256": "6c3ea56d9debffcf25243e9a41d58805af269772d266088c83d19053f7ccebf1",
   "statement_pairs_sha256": "2b8e6af47f728734179fa6d023e74d812a888e65d4f111e8ff4a6c01f75c823b",
-  "observation_source_sha256": "9f0b4479a714b852af82426ac4665d1159fddd22472555b988430253c14cf499",
+  "observation_source_sha256": "5d00cc190ae11801bb4ae2af09f7eacb12c2fee35f8645b1aef611a12cf09fd0",
   "accepted_correspondence": [],
   "new_correspondence": [{"item_id":7,"logical_path":"read","implementation_path":"read","wrapper_path":"__proctor_wrapper_read"}],
   "current_items": [{"item_id":7,"logical_path":"read","source_copy_path":"__proctor_source_read","implementation_path":"read","wrapper_path":"__proctor_wrapper_read","transform_labels":[0]}]
@@ -2441,7 +2461,7 @@ cross-category failures use
 The test substitutes the exact mutated field/value/category into these fixed
 templates and compares the complete message.
 
-### P5-PY-04 `real_cli_rejects_versions_paths_and_partial_outputs`
+### P5-PY-04 `tool_boundary_rejects_versions_paths_and_partial_outputs`
 
 ```rust
 pub unsafe fn read(mut pointer: *const i32) -> i32 { *pointer }
@@ -2454,37 +2474,26 @@ The digest inputs are exactly candidate
 `pub unsafe fn read(mut pointer: &i32) -> i32 { *pointer }\n`, statement sidecar
 `{"schema_version":1,"statements":[{"item_id":7,"path":"read","label":0,"after_statement":"*pointer"}]}\n`,
 and observation source
-`unsafe fn source_copy(mut pointer: *const i32) -> i32 { #[proctor(0)] *pointer }\nunsafe fn read(mut pointer: &i32) -> i32 { #[proctor(0)] *pointer }\n`.
+`unsafe fn __proctor_source_read(mut pointer: *const i32) -> i32 { #[proctor(0)] *pointer }\nunsafe fn read(mut pointer: &i32) -> i32 { #[proctor(0)] *pointer }\npub unsafe fn __proctor_wrapper_read(mut pointer: *const i32) -> i32 {\n    let __proctor_result = crate::read(&*(pointer as *const i32));\n    __proctor_result\n}\n`.
 
 ```json
 {"schema_version":1,"items":[{"id":7,"path":"read","name":"read","skeleton":"unsafe fn read(mut pointer: &i32) -> i32 { #[proctor(0)] *pointer }","needs_transformation":true,"statements_requiring_transformation":[0]}],"transformation":"unsafe fn read(mut pointer: &i32) -> i32 { #[proctor(0)] *pointer }","accepted_correspondence":[]}
 ```
 
 ```json
-{"schema_version":1,"candidate_sha256":"6c3ea56d9debffcf25243e9a41d58805af269772d266088c83d19053f7ccebf1","statement_pairs_sha256":"2b8e6af47f728734179fa6d023e74d812a888e65d4f111e8ff4a6c01f75c823b","observation_source_sha256":"9f0b4479a714b852af82426ac4665d1159fddd22472555b988430253c14cf499","accepted_correspondence":[],"new_correspondence":[{"item_id":7,"logical_path":"read","implementation_path":"read","wrapper_path":"__proctor_wrapper_read"}],"current_items":[{"item_id":7,"logical_path":"read","source_copy_path":"__proctor_source_read","implementation_path":"read","wrapper_path":"__proctor_wrapper_read","transform_labels":[0]}]}
+{"schema_version":1,"candidate_sha256":"6c3ea56d9debffcf25243e9a41d58805af269772d266088c83d19053f7ccebf1","statement_pairs_sha256":"2b8e6af47f728734179fa6d023e74d812a888e65d4f111e8ff4a6c01f75c823b","observation_source_sha256":"5d00cc190ae11801bb4ae2af09f7eacb12c2fee35f8645b1aef611a12cf09fd0","accepted_correspondence":[],"new_correspondence":[{"item_id":7,"logical_path":"read","implementation_path":"read","wrapper_path":"__proctor_wrapper_read"}],"current_items":[{"item_id":7,"logical_path":"read","source_copy_path":"__proctor_source_read","implementation_path":"read","wrapper_path":"__proctor_wrapper_read","transform_labels":[0]}]}
 ```
 
 Expected result:
 
-- Real CLI: every failure exits 1 and writes
-  `crat-tool: <code>: <message>\n`. Exact pairs are:
-  `unsupported_schema_version` / `unsupported schema_version 2`;
-  `output_path_collision` / `output paths must be pairwise distinct`;
-  `metadata_io` / `failed to read replacement-observation-metadata.json`;
-  `observation_source_digest_mismatch` / `observation source SHA-256 does not match metadata`;
-  `malformed_proctor_label` / `source_copy contains a malformed proctor statement label`;
-  and `output_io` / `failed to create extraction output temporary` for an
-  unwritable destination. Schema 1 with the request and metadata embedded in
-  this case succeeds.
-- Filesystem matrix: failure at each of four replacement temporary writes/final
-  renames and at extraction temporary/final rename removes all owned
-  temporaries and every earlier final. Cleanup failure is appended
-  deterministically to the primary error. This is Rust CLI coverage, not a
-  duplicate assertion inferred from the Python tooling test.
-  Each simulated write/rename failure uses code `output_io` and exact message
-  `failed to write <path>.tmp` or `failed to rename <path>.tmp to <path>` with
-  the concrete matrix path substituted; cleanup failure appends
-  `; cleanup failed: <cleanup-message>` to that line.
+- Tools source-string tests reject unsupported schemas, malformed PROCTOR
+  labels, inconsistent metadata, and observation-source compilation failures
+  without invoking the CLI or changing filesystem state. Schema 1 with the
+  request and metadata embedded in this case succeeds.
+- Existing PROCTOR tooling tests cover exact command construction, distinct
+  paths, required outputs, nonzero exits, partial-output cleanup, and digest
+  validation through an offline tool boundary. No Crat test asserts
+  process exit, stderr, CLI serialization/publication, or filesystem mutation.
 
 ### P5-PY-05 `extraction_runs_only_after_successful_build`
 
@@ -2677,7 +2686,8 @@ Phase 5 is not complete until:
 - all named cases are implemented with their Rust input local to the case;
 - the ordinary candidate and statement-pair sidecar remain byte-for-byte;
 - every closed expression/type/operator/literal variant has exact serde tests;
-- real CLI process/error/cleanup and schema-version tests pass;
+- tools source-string protocol tests and PROCTOR offline tool-boundary tests
+  pass;
 - focused/full Rust and Python tests pass;
 - `cargo fmt` and `cargo clippy --workspace --all-targets` pass under the
   repository warning policy; and

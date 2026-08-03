@@ -37,6 +37,8 @@ You are an expert in Rust and Python.
   using static analysis. Its source code is under `./proctor/stages/crat`. While
   some part of Crat is irrelevant to the current project, many parts are
   valuable, and you may extend it.
+* Crat tests must not exercise the `crat-tool` CLI, change filesystem state, or
+  use a project-root `tests/` directory.
 * Run `cargo fmt` and `cargo clippy` under `./proctor/stages/crat` after
   modifying its source code. While you should resolve all Clippy warnings, the
   following warnings can be addressed only by inserting `#[allow(clippy::...)]`

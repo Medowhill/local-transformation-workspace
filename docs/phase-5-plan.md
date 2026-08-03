@@ -522,9 +522,10 @@ Primitive `name` is exactly one of `bool`, `char`, `str`, `never`, `i8`, `i16`,
 compiler/target. Unit is an empty tuple.
 Array `length` is an evaluated `u64`. Mutability is `"const"`/`"mut"` for raw
 pointers and `"shared"`/`"mutable"` for references. `adt_kind` is `"struct"`,
-`"enum"`, or `"union"`. ADT `arguments` contains only recursively representable
-type arguments; lifetimes are omitted. Const arguments other than array length
-are unsupported.
+`"enum"`, or `"union"`. ADT `arguments` contains every recursively
+representable rustc-normalized type argument, including representable default
+arguments such as `Box<T, alloc::alloc::Global>`; lifetimes only are omitted.
+Const arguments other than array length are unsupported.
 
 An external/library ADT identity is:
 
@@ -650,8 +651,9 @@ observations makes no cross-observation identity claim.
 
 Allocate IDs for every resolved source binding in pure source-expression
 preorder, including source-only bindings, then reuse those IDs for paired target
-references. A target binding without source correspondence discards the
-observation. Allocate free-function, local ADT, field, variant, constant,
+references. A target binding whose paired source binding was not encountered
+in that selected source expression discards the observation without allocating
+or reusing another ID. Allocate free-function, local ADT, field, variant, constant,
 static, and method namespaces separately in source-tree then target-tree
 first-occurrence order. Repeated identities reuse IDs.
 

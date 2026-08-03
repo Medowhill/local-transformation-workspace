@@ -18,6 +18,8 @@ together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
 
+Phase 6 is a prospective task set until its implementation is complete.
+
 Substantive text from the former consolidated plan is preserved in the linked
 detailed files. Imperative and future-tense wording in those files is
 historical. Material shared by several task sets is preserved in
@@ -136,3 +138,13 @@ apply rules.
 
 - [Detailed Phase 5 plan](phase-5-plan.md)
 - [Phase 5 test plan](phase-5-test-plan.md)
+
+## Phase 6: Rule synthesis
+
+Phase 6 plans deterministic offline synthesis of candidate expression rules
+from one or more observation documents. It uses coupled, grammar-aware
+anti-unification in a reusable Python library, keeps application and semantic
+validation out of scope, and widens field observations to retain their owner.
+
+- [Detailed Phase 6 plan](phase-6-plan.md)
+- No Phase 6 test-plan document has been created yet.

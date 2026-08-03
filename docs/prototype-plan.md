@@ -147,4 +147,4 @@ anti-unification in a reusable Python library, keeps application and semantic
 validation out of scope, and widens field observations to retain their owner.
 
 - [Detailed Phase 6 plan](phase-6-plan.md)
-- No Phase 6 test-plan document has been created yet.
+- [Phase 6 test plan](phase-6-test-plan.md)

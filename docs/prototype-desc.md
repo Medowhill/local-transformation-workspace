@@ -11,6 +11,12 @@ they disagree with this description. The broader [research plan](research-plan.m
 and [component specification](proctor-spec.md) describe the intended research
 system, including behavior that this prototype does not implement.
 
+Keep this document as a cohesive description of the current prototype, not a
+changelog. When behavior changes, revise the existing organization and remove
+obsolete prose rather than appending milestone-specific details. Keep the tone
+and level of detail consistent across sections, without giving recent changes
+disproportionate coverage.
+
 The [historical prototype plan](prototype-plan.md) explains how the
 implementation was built and later amended. Read it for rationale and task
 provenance, then follow its links to a detailed plan only when that history is
@@ -20,6 +26,9 @@ The main implementation surfaces are:
 
 - the PROCTOR
   [local-transformation stage](../proctor/stages/local-transformation/);
+- the stage-adjacent offline
+  [rule synthesis library](../proctor/stages/local-transformation/rule_synthesis.py)
+  and [standalone command](../proctor/stages/local-transformation/extract_rules.py);
 - the stage's focused
   [Python tests](../proctor/tests/test_local_transformation.py);
 - Crat's [local-transformation tools](../proctor/stages/crat/crates/tools/src/);
@@ -43,7 +52,7 @@ The stage recognizes two configuration keys:
 - `dump_llm_exchanges`, which retains each rendered prompt and provider
   response as a stage artifact.
 
-The prototype does not:
+The stage does not:
 
 - run a test package or establish semantic correctness;
 - read, produce, extract, or apply reusable rule sets;
@@ -52,6 +61,11 @@ The prototype does not:
 - remove compatibility wrappers after all functions are transformed; or
 - checkpoint and resume individual function groups within one stage
   invocation.
+
+Separately from the stage contract, the prototype includes an offline command
+that reads one or more ordinary observation documents and writes candidate
+expression rules. It is not a PROCTOR stage and does not consume or produce a
+framework artifact.
 
 An existing `proctor.toml` is copied with the project but otherwise ignored.
 The output is required to build, not to pass a behavioral test suite.
@@ -376,6 +390,19 @@ Provider retries contribute separate usage attempts but do not increment the
 logical generation count. Usage accumulated before a terminal failure is
 still reported. Optional exchange artifacts retain every prompt and response
 by SCC and generation.
+
+## Offline rule synthesis
+
+The stage-adjacent synthesis library derives deterministic candidate expression
+rules from compatible pairs in one or more closed version-1 observation
+documents. It generalizes normalized source and target trees together while
+preserving their pointer, type, and local-identity relationships, then
+canonicalizes, deduplicates, and sorts the candidates.
+
+`extract_rules.py` validates the inputs and atomically writes a closed
+version-1 rule document. It does not access a Rust project or compiler, apply or
+rank rules, or establish semantic correctness; a valid input with no candidate
+rules produces an empty document.
 
 ## Supportedness and further reading
 

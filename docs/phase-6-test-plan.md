@@ -729,13 +729,21 @@ wrong_member_owner_rule_sort = copy.deepcopy(accepted)
 wrong_member_owner_rule_sort["rules"][0]["source_pattern"]["field"]["owner"] = var("field", 0)
 wrong_member_id_rule_sort = copy.deepcopy(accepted)
 wrong_member_id_rule_sort["rules"][0]["source_pattern"]["field"]["id"] = var("struct", 0)
+anchor_pattern_rule = copy.deepcopy(binding_pattern_rule)
+anchor_pattern_rule["rules"][0]["source_pattern"]["block"]["statements"][0]["pattern"]["id"] = var("anchor", 0)
+anchor_pattern_rule["rules"][0]["target_pattern"] = copy.deepcopy(
+    anchor_pattern_rule["rules"][0]["source_pattern"]
+)
+
 wrong_pattern_rule_sort = copy.deepcopy(binding_pattern_rule)
-wrong_pattern_rule_sort["rules"][0]["source_pattern"]["block"]["statements"][0]["pattern"]["id"] = var("anchor", 0)
+wrong_pattern_rule_sort["rules"][0]["source_pattern"]["block"]["statements"][0]["pattern"]["id"] = var("expression", 0)
 ```
 
-Expected: `accepted` and `binding_pattern_rule` load successfully. Each named
-wrong-sort rule mutation fails. Rule support is position- and sort-specific
-and never makes observation loading permissive.
+Expected: `accepted`, `binding_pattern_rule`, and `anchor_pattern_rule` load
+successfully. An anchor variable is valid in a binding-pattern ID when it
+denotes the identity already established by the pointer-anchor context. Each
+named wrong-sort rule mutation fails. Rule support is position- and
+sort-specific and never makes observation loading permissive.
 
 ## 6. Canonical coupled-synthesis cases
 

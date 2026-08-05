@@ -158,3 +158,4 @@ views. PROCTOR tries the applied view first and falls back to the baseline view
 for bounded LLM repair after a rule-involved build failure.
 
 - [Detailed Phase 7 plan](phase-7-plan.md)
+- [Phase 7 test plan](phase-7-test-plan.md)

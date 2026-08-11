@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prototype Description"
+  short_description: "Edit the prototype description cohesively"
+  default_prompt: "Use $prototype-desc to update docs/prototype-desc.md proportionately."

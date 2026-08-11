@@ -11,12 +11,6 @@ they disagree with this description. The broader [research plan](research-plan.m
 and [component specification](proctor-spec.md) describe the intended research
 system, including behavior that this prototype does not implement.
 
-Keep this document as a cohesive description of the current prototype, not a
-changelog. When behavior changes, revise the existing organization and remove
-obsolete prose rather than appending milestone-specific details. Keep the tone
-and level of detail consistent across sections, without giving recent changes
-disproportionate coverage.
-
 The [historical prototype plan](prototype-plan.md) explains how the
 implementation was built and later amended. Read it for rationale and task
 provenance, then follow its links to a detailed plan only when that history is

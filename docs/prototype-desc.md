@@ -110,7 +110,7 @@ the root `target/`; it removes obsolete Rust source files before writing the
 expanded library source. Explicit bin paths are lexically normalized and may
 not be absolute or escape the crate root.
 
-`crat-tool` exposes seven local-transformation operations:
+`crat-tool` exposes eight local-transformation operations:
 
 - `make-skeleton` compiles the prepared library, optionally loads and applies
   a rule document, and writes JSON item records;
@@ -124,7 +124,9 @@ not be absolute or escape the crate root.
 - `extract-observations` compiles only the labeled observation source and
   writes a versioned closed observation document;
 - `synthesize-rules` validates one or more observation documents and writes a
-  closed, canonical rule document; and
+  closed, canonical rule document;
+- `pretty-print-rules` validates one rule document and writes a human-readable
+  Markdown bullet list;
 - `merge-observations` validates and concatenates ordinary observation
   documents in argument and member order.
 
@@ -217,10 +219,13 @@ remains authoritative for name resolution and type correctness.
 ## Statement labels, preservation, and holes
 
 Source and target statements receive matching depth-first numeric
-`#[proctor(N)]` labels. A statement disposition is either:
+`#[proctor(N)]` labels. A statement disposition is one of:
 
 - `preserve`, meaning Crat has proved that the complete statement subtree
   remains valid under the selected target types;
+- `preserve_shell`, meaning Crat has proved the statement's own declaration or
+  control shell while nested labeled statement groups remain independently
+  classified;
 - `transform`, meaning its payload remains work for an LLM; or
 - `rule_applied`, meaning rule application replaced the complete statement's
   selected regions atomically and its canonical applied payload must be
@@ -229,15 +234,18 @@ Source and target statements receive matching depth-first numeric
 Preservation is deliberately conservative. Missing AST/HIR mappings, sensitive
 pointer-containing types, changed call signatures, unsafe or unresolved
 callables, macros, mutable statics, unions, closures, inline assembly, and
-other uncertain constructs require transformation.
+other uncertain constructs require transformation. For `preserve_shell`, this
+proof applies to the statement's own payload while nested labeled statements
+remain independently classified.
 
-A preserved parent cannot contain a transformed or rule-applied descendant.
-Preserved statements retain the canonical view subtree. Transformed statements
-retain their structural role and control shape but replace relevant payloads
-with parseable `todo!()` holes. Rule-applied statements retain their canonical
-applied payload while recursively exposing any transform descendants. The two
-views must have identical statement labels, parent/child topology, and
-function signatures; the baseline cannot contain `rule_applied`.
+A fully preserved parent cannot contain any non-preserved descendant.
+Preserved statements retain the canonical view subtree. Preserved-shell and
+rule-applied statements retain their canonical payload while recursively
+exposing independently classified descendants. Transformed statements retain
+their structural role and control shape but replace relevant payloads with
+parseable `todo!()` holes. Only `transform` requires LLM work. The two views
+must have identical statement labels, parent/child topology, and function
+signatures; the baseline cannot contain `rule_applied`.
 
 An ordinary `if` may occur beneath a non-control expression wrapper only in a
 restricted C-conditional-like form: it must have an `else`, each branch must
@@ -261,7 +269,7 @@ It enforces:
 - existing binding identity, pattern role, `ref` mode, and explicit local
   types;
 - label order, placement, grouping, and nested control structure;
-- canonical preserved regions;
+- canonical fully preserved regions and preserved statement shells;
 - exact control roles, branch and arm structure, guards, and descendant
   placement; and
 - lexical locality of generated temporaries.
@@ -279,9 +287,9 @@ Malformed requests and inconsistent expected skeletons produce a
 deterministic, function-oriented diagnostics. A conforming result produces
 `valid`.
 
-Preserved output is not trusted. The validator replaces preserved groups with
-their immutable target-skeleton statements before checking the result, and the
-replacer independently performs stricter alignment and canonical restoration.
+Preserved output is not trusted. The validator restores preserved groups and
+shells from the immutable target skeleton before checking the result, and the
+replacer independently performs the same canonical restoration.
 
 ## Replacement and compatibility
 
@@ -400,14 +408,14 @@ observation document. PROCTOR retains accepted documents opaquely; failed,
 superseded, and rule-complete attempts contribute none.
 
 Success copies the final current project and publishes deterministic
-`statement-pairs.md` and `observations.json` artifacts under
+`statement-pairs.md`, `observations.json`, and `statistics.json` artifacts under
 `outputs.artifacts_dir`, or under `framework.workdir` when no artifact directory
 is present. Ordered by item and statement, the report pairs prompt-facing
 source statements with accepted canonical replacements and relevant source and
-target pointer types; it warns when binding metadata is incomplete. A stale
-report is cleared at invocation start, and final copying and publication are one
-cleanup transaction. Failure reports no usable outputs. The report is
-diagnostic and does not extract or apply reusable rules.
+target pointer types; it warns when binding metadata is incomplete. Stale
+artifact files or symlinks are cleared at invocation start, and final copying
+and publication are one cleanup transaction. Failure reports no usable
+outputs. The report is diagnostic and does not extract or apply reusable rules.
 
 Before final publication, Crat validates and merges the accepted documents in
 schedule order, preserving duplicates. The artifact is published even when it

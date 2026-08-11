@@ -13,13 +13,10 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--5 and Amendments 1--5 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--5 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
-
-Phase 6 denotes the completed rule-synthesis task set. Phase 7 denotes the
-planned rule-application task set.
 
 Substantive text from the former consolidated plan is preserved in the linked
 detailed files. Imperative and future-tense wording in those files is
@@ -143,19 +140,19 @@ apply rules.
 ## Phase 6: Rule synthesis
 
 Phase 6 added deterministic offline synthesis of candidate expression rules
-from one or more observation documents. It uses coupled, grammar-aware
-anti-unification in a reusable Python library, keeps application and semantic
-validation out of scope, and widens field observations to retain their owner.
+from one or more observation documents. It initially used a reusable Python
+library for coupled, grammar-aware anti-unification, kept rule application and
+semantic validation out of scope, and retained field owners in observations.
 
 - [Detailed Phase 6 plan](phase-6-plan.md)
 - [Phase 6 test plan](phase-6-test-plan.md)
 
 ## Phase 7: Rule application
 
-Phase 7 moves observation and rule ownership into Crat, applies an optional
-fixed rule set during skeleton generation, and emits baseline and rule-applied
-views. PROCTOR tries the applied view first and falls back to the baseline view
-for bounded LLM repair after a rule-involved build failure.
+Phase 7 moved observation, rule, and synthesis ownership into Crat, applied an
+optional fixed rule set during skeleton generation, and added baseline and
+rule-applied views. PROCTOR began with the applied view and fell back to the
+baseline view for bounded LLM repair after a rule-involved build failure.
 
 - [Detailed Phase 7 plan](phase-7-plan.md)
 - [Phase 7 test plan](phase-7-test-plan.md)

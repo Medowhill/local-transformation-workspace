@@ -26,9 +26,6 @@ The main implementation surfaces are:
 
 - the PROCTOR
   [local-transformation stage](../proctor/stages/local-transformation/);
-- the stage-adjacent offline
-  [rule synthesis library](../proctor/stages/local-transformation/rule_synthesis.py)
-  and [standalone command](../proctor/stages/local-transformation/extract_rules.py);
 - the stage's focused
   [Python tests](../proctor/tests/test_local_transformation.py);
 - Crat's [local-transformation tools](../proctor/stages/crat/crates/tools/src/);
@@ -38,9 +35,12 @@ The main implementation surfaces are:
 ## Prototype boundary
 
 The prototype is a standalone PROCTOR stage that transforms one Cargo project
-at a time. Its stage envelope requires one `rust_project` and declares one
-`rust_project` output. The input is read-only; all work occurs in the stage
-work directory, and the output directory must not already exist.
+at a time. Its stage envelope requires one `rust_project`, accepts an optional
+read-only `rule_set`, and declares one `rust_project` output. Inputs are
+read-only; all work occurs in the stage work directory, and the output
+directory must not already exist. A rule set must be a regular nonsymlink file
+whose path does not overlap any input, output, work, artifact, usage-log, or
+Crat boundary.
 
 The input Cargo manifest must declare `[lib].path` as one regular, root-level
 source file. Absolute paths, paths containing `..`, and nested library paths
@@ -55,17 +55,16 @@ The stage recognizes two configuration keys:
 The stage does not:
 
 - run a test package or establish semantic correctness;
-- read, produce, extract, or apply reusable rule sets;
+- produce a rule set as a framework output;
 - interpret or update `proctor.toml` or its wrapper metadata;
 - transform pointer-containing named types or global variable types;
 - remove compatibility wrappers after all functions are transformed; or
 - checkpoint and resume individual function groups within one stage
   invocation.
 
-Separately from the stage contract, the prototype includes an offline command
-that reads one or more ordinary observation documents and writes candidate
-expression rules. It is not a PROCTOR stage and does not consume or produce a
-framework artifact.
+Separately from the stage contract, `crat-tool` can synthesize rules from one
+or more observation documents and merge multiple observation documents. These
+are not PROCTOR stages and do not consume or produce framework artifacts.
 
 An existing `proctor.toml` is copied with the project but otherwise ignored.
 The output is required to build, not to pass a behavioral test suite.
@@ -80,11 +79,12 @@ For one stage invocation, the implementation:
 3. copies the complete input project to `work/current`;
 4. runs ordinary Crat `expand` followed immediately by `unexpand`, with
    `--unexpand-use-print`;
-5. generates immutable skeleton records from the prepared project;
+5. validates the optional rule document in Crat and generates immutable dual-
+   view skeleton records, applying matching rules when supplied;
 6. normalizes target-function safety in the current library source;
 7. requires the normalized project to pass `cargo build`;
 8. constructs the function graph and a deterministic leaf-first SCC schedule;
-9. processes each SCC mechanically or with an LLM;
+9. processes each SCC from its applied view mechanically or with an LLM;
 10. structurally validates LLM output when an LLM was used;
 11. asks Crat to produce a complete candidate library source and a canonical
     statement-pair sidecar, plus a separate labeled observation source and
@@ -92,9 +92,11 @@ For one stage invocation, the implementation:
 12. validates, installs, and builds the candidate transactionally, retaining
     its source and statement pairs only on success;
 13. extracts typed expression observations from the labeled source only after
-    the candidate build succeeds; and
-14. copies the final project to the declared output and publishes the
-    statement-pair report and `observations.json`.
+    the candidate build succeeds;
+14. asks Crat to merge the accepted observation documents without Python
+    parsing or reserialization; and
+15. copies the final project to the declared output and publishes the
+    statement-pair report and merged `observations.json`.
 
 The initial input copy retains an existing `target/`. Candidate builds also
 retain their changes to `target/` after a source rollback. Earlier successful
@@ -108,9 +110,10 @@ the root `target/`; it removes obsolete Rust source files before writing the
 expanded library source. Explicit bin paths are lexically normalized and may
 not be absolute or escape the crate root.
 
-`crat-tool` exposes five operations:
+`crat-tool` exposes seven local-transformation operations:
 
-- `make-skeleton` compiles the prepared library and writes JSON item records;
+- `make-skeleton` compiles the prepared library, optionally loads and applies
+  a rule document, and writes JSON item records;
 - `validate` parses a validation request and returned Rust snippets without
   compiling a project;
 - `normalize-safety` rewrites one Rust source file;
@@ -119,7 +122,11 @@ not be absolute or escape the crate root.
   separate labeled observation source, and digest-bound correspondence
   metadata; and
 - `extract-observations` compiles only the labeled observation source and
-  writes a versioned closed observation document.
+  writes a versioned closed observation document;
+- `synthesize-rules` validates one or more observation documents and writes a
+  closed, canonical rule document; and
+- `merge-observations` validates and concatenates ordinary observation
+  documents in argument and member order.
 
 Filesystem I/O and command dispatch remain thin CLI responsibilities.
 Skeleton generation, validation, preservation, and replacement are in the
@@ -152,10 +159,14 @@ Records are emitted in deterministic recursive source order for:
 - unions.
 
 Each record has a numeric ID, item kind, and crate-relative path. Function
-records additionally contain a final name, annotated source and target
-skeleton, source and target signatures, statement-disposition metadata,
-direct dependencies, signature dependencies, and resolved foreign-function
-names.
+records additionally contain a final name, annotated source, source and target
+signatures, direct dependencies, signature dependencies, resolved
+foreign-function names, and two complete skeleton views. The `baseline` view
+contains the ordinary analysis result. The `applied` view has the same label
+topology and signature but includes every statement that was completely fixed
+by selected rules. Each view carries its own skeleton, transformation flag,
+recursive statement-disposition forest, and statement-pair metadata for its
+remaining transform labels.
 
 Dependencies are compiler-resolved, direct rather than transitive, sorted,
 and deduplicated. Foreign functions do not become transformable records or
@@ -183,24 +194,50 @@ prelude is enabled and those names resolve to the standard language items.
 Shadowing, an unavailable path, or another unspellable synthesized type aborts
 the complete skeleton generation operation rather than emitting invalid Rust.
 
+## Rule application
+
+Observation and rule documents are closed, canonical version-1 formats owned
+by the Crat tools library. Skeleton generation optionally loads one fixed rule
+set and uses the same compiler-resolved expression-region selection as
+observation extraction.
+
+Matching uses normalized expressions, pointer anchors, source and target
+types, assignment-side context, and resolved identities. Applicable rules are
+ranked deterministically, and replacements are materialized with retained
+source syntax and scope-aware type spelling. Every selected region in one
+statement must be covered; otherwise that statement remains unmodified.
+
+Target-context inference is deliberately narrow and limited to supported
+declarations, assignments, direct calls, returns, body tails, and aggregate
+fields. Candidates that cannot currently be bound, spelled, parsed, or
+admitted structurally are skipped without invalidating the rule document.
+Materialization checks syntax and statement shape; the candidate Cargo build
+remains authoritative for name resolution and type correctness.
+
 ## Statement labels, preservation, and holes
 
 Source and target statements receive matching depth-first numeric
 `#[proctor(N)]` labels. A statement disposition is either:
 
 - `preserve`, meaning Crat has proved that the complete statement subtree
-  remains valid under the selected target types; or
-- `transform`, meaning its payload remains work for an LLM.
+  remains valid under the selected target types;
+- `transform`, meaning its payload remains work for an LLM; or
+- `rule_applied`, meaning rule application replaced the complete statement's
+  selected regions atomically and its canonical applied payload must be
+  retained.
 
 Preservation is deliberately conservative. Missing AST/HIR mappings, sensitive
 pointer-containing types, changed call signatures, unsafe or unresolved
 callables, macros, mutable statics, unions, closures, inline assembly, and
 other uncertain constructs require transformation.
 
-A preserved parent cannot contain a transformed descendant. Preserved
-statements retain the canonical target-skeleton subtree. Transformed
-statements retain their structural role and control shape but replace relevant
-payloads with parseable `todo!()` holes.
+A preserved parent cannot contain a transformed or rule-applied descendant.
+Preserved statements retain the canonical view subtree. Transformed statements
+retain their structural role and control shape but replace relevant payloads
+with parseable `todo!()` holes. Rule-applied statements retain their canonical
+applied payload while recursively exposing any transform descendants. The two
+views must have identical statement labels, parent/child topology, and
+function signatures; the baseline cannot contain `rule_applied`.
 
 An ordinary `if` may occur beneath a non-control expression wrapper only in a
 restricted C-conditional-like form: it must have an `else`, each branch must
@@ -294,11 +331,13 @@ leaf-first so callees are transformed before callers; ties are resolved by the
 smallest item ID. Duplicate final function names are permitted across SCCs but
 are fatal within one SCC.
 
-An SCC that contains no statement requiring transformation skips the LLM and
-validator. Its immutable target skeletons are sent directly to replacement and
-then built. A mechanical replacement or build failure is fatal.
+Every SCC starts from its applied views. A rule-complete SCC proceeds
+mechanically; otherwise one LLM request covers every member while rule-applied
+regions remain immutable. If a rule-involved candidate fails its Cargo build,
+the stage rolls it back, switches the whole SCC permanently to its baseline
+views, and continues within the existing repair budget. A mechanical failure
+without a rule application remains fatal.
 
-If any SCC member requires transformation, one LLM request covers every member.
 The prompt contains:
 
 - each member's annotated source and target skeleton, ordered by item ID;
@@ -313,8 +352,9 @@ Only complete breadth-first depths are admitted. Mandatory context exceeding
 100,000 Python characters aborts before an LLM request; optional closure stops
 before exceeding the limit.
 
-Skeleton records remain immutable prompt input even after earlier SCCs have
-changed the promoted current source.
+The chosen views remain immutable prompt input even after earlier SCCs change
+the promoted source. Prompting, validation, replacement, and reporting use the
+same view for every member.
 
 ## LLM response and repair
 
@@ -326,19 +366,19 @@ The response extractor considers complete line-oriented triple-backtick
 blocks, selects the longest block, and chooses the first on equal length.
 Missing fenced code is a repairable formatting failure.
 
-The stage permits one initial generation and at most ten repair generations.
-Each repair is a fresh request containing only the latest failed
-transformation and diagnostics.
+The stage permits one initial generation and at most ten repair generations
+across applied processing and any baseline fallback. Each repair is a fresh
+request containing only the latest failed transformation and diagnostics. A
+fallback never returns to the applied views for that SCC.
 
-These failures are repairable:
-
-- missing fenced code;
-- structurally invalid returned Rust; and
-- failure to build an installed LLM-generated candidate.
+Missing fenced code, structurally invalid returned Rust, and candidate build
+failures are repairable. A build failure involving applied rules first causes
+the one-way baseline fallback described above.
 
 Setup or protocol errors, malformed validator output, tool failures,
 replacement failures, provider terminal errors, context overflow, initial
-normalization/build failure, and mechanical SCC failures abort the stage.
+normalization/build failure, and mechanical SCC failures without rule
+application abort the stage.
 
 ## Build transaction and reporting
 
@@ -354,11 +394,10 @@ sidecar. The stage validates it before candidate installation and retains its
 canonical groups only after a successful build.
 
 The ordinary candidate and statement-pair sidecar are unchanged by observation
-collection. After each SCC candidate builds successfully, Crat uses a separate
-labeled source and explicit callable correspondence to extract normalized,
-typed source/target expression observations. Unsupported regions are skipped
-conservatively; protocol, compiler, and correspondence inconsistencies are
-fatal. Failed or superseded attempts contribute no observations.
+collection. After an accepted SCC with remaining transform labels, Crat uses a
+separate labeled source and callable correspondence to extract a typed
+observation document. PROCTOR retains accepted documents opaquely; failed,
+superseded, and rule-complete attempts contribute none.
 
 Success copies the final current project and publishes deterministic
 `statement-pairs.md` and `observations.json` artifacts under
@@ -370,9 +409,10 @@ report is cleared at invocation start, and final copying and publication are one
 cleanup transaction. Failure reports no usable outputs. The report is
 diagnostic and does not extract or apply reusable rules.
 
-The observations artifact is published even when no observations were
-collected, preserves producer order and duplicates, and is not a stage log.
-Scratch observation sources and metadata never enter the output project.
+Before final publication, Crat validates and merges the accepted documents in
+schedule order, preserving duplicates. The artifact is published even when it
+is empty; a merge failure prevents all final outputs. Scratch observation
+sources, metadata, and per-SCC documents never enter the output project.
 
 The stage output reports:
 
@@ -393,16 +433,18 @@ by SCC and generation.
 
 ## Offline rule synthesis
 
-The stage-adjacent synthesis library derives deterministic candidate expression
-rules from compatible pairs in one or more closed version-1 observation
-documents. It generalizes normalized source and target trees together while
-preserving their pointer, type, and local-identity relationships, then
-canonicalizes, deduplicates, and sorts the candidates.
+The Crat tools library derives deterministic candidate expression rules from
+compatible pairs in one or more closed version-1 observation documents. It
+generalizes normalized source and target trees together while preserving
+pointer, type, LHS, and local-identity relationships, then canonicalizes,
+deduplicates, and sorts the candidates. The thin `crat-tool synthesize-rules`
+command validates its inputs and atomically writes the result; valid inputs
+with no candidate rules produce an empty document. Python contains no
+observation or rule parser, validator, merger, or synthesizer.
 
-`extract_rules.py` validates the inputs and atomically writes a closed
-version-1 rule document. It does not access a Rust project or compiler, apply or
-rank rules, or establish semantic correctness; a valid input with no candidate
-rules produces an empty document.
+Normalized integer magnitudes use canonical ASCII digits. Rules that are valid
+but need target context unavailable to current application remain in the rule
+set and are skipped until that context can be inferred.
 
 ## Supportedness and further reading
 

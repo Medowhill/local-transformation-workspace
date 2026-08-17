@@ -13,7 +13,7 @@
 
 Treat Proctor as shared infrastructure for experiments that turn a TRACTOR-format C project into progressively safer Rust. The framework supplies orchestration, reproducibility, a vendor-neutral LLM client, usage accounting, prompt management, Rust context retrieval, and test-package execution. Each transformation stage remains an independently executable program and may use none of the shared libraries.
 
-The checked-in full pipeline is:
+The checked-in configs expose two active paths:
 
 ```text
 C project + test package
@@ -26,9 +26,14 @@ crat-adapter   -> symbolic pass chain + proctor.toml
         |
         v
 abstraction-recovery -> currently skips because candidate discovery is a scaffold
+
+C project + rule set
+        |
+        v
+c2rust-adapter -> crat-adapter -> local-transformation
 ```
 
-The design documents describe later discipline-repair and local-transformation stages. They are not present in the current configured pipeline.
+Use `configs/full_pipeline.toml` for the abstraction-recovery scaffold and `configs/c2rust_crat_local.toml` for the local-transformation prototype. Discipline repair remains a design item and has no stage implementation.
 
 Although early plans describe one Translation component, the implementation exposes C2Rust and CRAT as two stages. CRAT completes the component by creating `proctor.toml`.
 
@@ -41,7 +46,7 @@ Use these four framework artifact kinds:
 | `c_project` | TRACTOR-format C project | Normally supplied by the runner; never produced |
 | `rust_project` | Cargo project moving through transformations | May be supplied or produced |
 | `test_package` | Executable `run_test.sh` plus `test_data/` | Normally supplied; not currently producible |
-| `rule_set` | Opaque local-transformation rules file | May be supplied or produced |
+| `rule_set` | Opaque local-transformation rules file | May be supplied or produced by the framework contract; the current local stage only consumes it |
 
 `stage.toml` defines whether each kind is `required`, `optional`, or `unused`, and whether a stage produces a Rust project or rule set. `proctor validate` walks enabled stages in order and tracks availability.
 
@@ -73,6 +78,7 @@ Use this map to find the smallest owning surface:
 | `crates/proctor-rust-index/` | `syn`-based Rust item/edge indexer |
 | `proctor/testing/runner.py` | Cargo build, artifact inference, test-package invocation |
 | `stages/*-adapter/` | Envelope shims around pinned upstream tools |
+| `stages/local-transformation/` | SCC scheduling, prompt/repair loop, Crat tool protocol, transactional builds, observations, and statistics |
 | `stages/example-stage/` | Minimal framework-independent stage template |
 | `stages/example-llm-stage/` | Shared LLM/tracker/prompt integration example |
 | `tests/fake_stages/fake/` | Deterministic orchestration test double |

@@ -38,6 +38,7 @@ Merge global `[llm]` with `[stages.<id>.llm]`, with stage values winning. Do not
 - `configs/example.toml`: one copy-through native stage; starts from Rust + tests.
 - `configs/llm_example.toml`: one example LLM stage; starts from Rust.
 - `configs/full_pipeline.toml`: C2Rust, CRAT, then abstraction recovery; starts from C + tests.
+- `configs/c2rust_crat_local.toml`: C2Rust, a reduced CRAT pass chain, then local transformation; starts from C + an input rule set and uses a configured LLM.
 - `tests/e2e/crat_smoke.toml`: CRAT only over the vendored C2Rust fixture, with test gating.
 - `tests/e2e/translation_smoke.toml`: C2Rust then CRAT, global gate disabled and final tests run explicitly.
 

@@ -1,6 +1,6 @@
 ---
 name: proctor
-description: Repository onboarding and implementation guidance for the PROCTOR C-to-Rust orchestration framework. Use when working in this repository on pipeline configuration, stage contracts or adapters, orchestration and resume behavior, LLM providers and usage tracking, prompt/context infrastructure, test-package execution, benchmarks, end-to-end translation, documentation, debugging, reviews, or planning changes against the current implementation.
+description: Repository onboarding and implementation guidance for the PROCTOR C-to-Rust orchestration framework. Use when working in this repository on pipeline configuration, stage contracts or adapters, orchestration and resume behavior, LLM providers and usage tracking, prompt/context infrastructure, test-package execution, local transformation and rule integration, benchmarks, end-to-end translation, documentation, debugging, reviews, or planning changes against the current implementation.
 ---
 
 # Proctor
@@ -12,7 +12,7 @@ Use this skill as the repository map for the PROCTOR orchestration framework. St
 Read only the references needed for the task:
 
 - Read [architecture.md](references/architecture.md) first for unfamiliar or cross-cutting work, data flow, ownership, and source-of-truth rules.
-- Read [contracts-and-stages.md](references/contracts-and-stages.md) before changing envelopes, artifact kinds, `proctor.toml`, `stage.toml`, stage adapters, or native stages.
+- Read [contracts-and-stages.md](references/contracts-and-stages.md) before changing envelopes, artifact kinds, `proctor.toml`, `stage.toml`, stage adapters, native stages, or the local-transformation protocol.
 - Read [configuration-and-runs.md](references/configuration-and-runs.md) before changing config, CLI behavior, run directories, checkpoint/resume, bench, LLM settings, usage, prompts, or context retrieval.
 - Read [testing-and-status.md](references/testing-and-status.md) before implementation or review to select tests and distinguish implemented behavior from planned features.
 
@@ -46,12 +46,21 @@ Call out a discrepancy instead of silently implementing an older plan. Preserve 
 2. Start from `stages/example-stage/` for a framework-free stage or `stages/example-llm-stage/` for shared LLM infrastructure.
 3. Declare exact requirements and products in `stage.toml`.
 4. Read inputs only, use `framework.workdir` for scratch data, create outputs only at envelope destinations, and always emit a valid failure envelope on errors.
-5. Build and test transformation output inside the stage. Update `proctor.toml` when wrapper relationships change.
+5. Build and test transformation output inside the stage. Update `proctor.toml` when a non-local transformation changes persisted wrapper relationships.
 6. Add manifest/contract tests and at least one direct stage or orchestrated test.
 
 ### Change an adapter
 
 Keep the upstream `stages/c2rust/` and `stages/crat/` submodules unmodified unless the task explicitly targets those repositories. Put envelope translation, environment setup, caching, tool invocation, and output normalization in the corresponding `*-adapter/`.
+
+### Change local transformation
+
+1. Read [contracts-and-stages.md](references/contracts-and-stages.md), then use the `$crat` skill for changes that cross into `crat-tool` or shared pointer analysis.
+2. Keep SCC scheduling, prompts, LLM repair, transactional Cargo builds, artifacts, and usage accounting in `stages/local-transformation/`; keep compiler-resolved structure, replacement, observations, and rules in Crat.
+3. Preserve the dual skeleton views: try optional rule applications through the applied view, but fall back to the baseline view for the whole SCC after a rule-involved candidate fails to compile.
+4. Treat the input rule set as read-only. Keep replacement correspondence in stage state rather than `proctor.toml`; the stage produces a Rust project and diagnostic/learning artifacts, not a new rule set.
+5. Accept a replacement only after structural validation when LLM output is used and a transactional `cargo build` succeeds. Extract observations only from accepted candidates.
+6. Run `tests/test_local_transformation.py` and the focused Crat `tools` tests for the Rust surface you changed.
 
 ### Change the stage contract
 
@@ -102,6 +111,6 @@ Run `uv run pytest -m e2e` only when the affected adapter, real CRAT/C2Rust flow
 
 ## Avoid stale assumptions
 
-Do not present these planned items as implemented: test-vector conversion or `make-tests`, per-stage `gate_tests`, test packages as stage-produced artifacts, chained/merge bench rule-set policies, automatic intermediate pruning, token-rate or budget enforcement, `prompts.lock`, or `check-stage`.
+Do not present these planned items as implemented: discipline repair, test-vector conversion or `make-tests`, per-stage `gate_tests`, test packages as stage-produced artifacts, chained/merge bench rule-set policies, automatic intermediate pruning, token-rate or budget enforcement, `prompts.lock`, or `check-stage`.
 
 Do not assume the global post-stage test gate is safe after C2Rust: executable cases are still library-shaped until CRAT's `bin` pass.

@@ -157,6 +157,20 @@ After copying the final pass output, emit `proctor.toml` from CRAT `config.toml`
 
 Treat `stages/abstraction-recovery/` as a native-stage scaffold, not a completed transformer. Candidate discovery returns no candidates, so the stage currently reports `skipped`. The intended fail-open loop is present, but identification, transformation, LLM repair, and usage reporting remain TODO.
 
+### Local transformation
+
+Use `stages/local-transformation/` for the implemented local pointer-transformation prototype. It requires a Rust project, optionally consumes a rule set, and produces only a Rust project through the stage contract.
+
+The stage:
+
+1. Copies the input, prepares one expanded/unexpanded root library with Crat, generates dual baseline/rule-applied skeleton views, normalizes function safety, and performs an initial Cargo build.
+2. Schedules functions by leaf-first call-graph SCCs. It starts from rule-applied skeletons, skips the LLM when the entire SCC is complete, and otherwise asks the LLM only for remaining transform regions.
+3. Structurally validates LLM output, replaces the SCC through `crat-tool`, and installs each candidate transactionally around `cargo build`. A rule-involved compile failure retries from the baseline view for the entire SCC.
+4. Extracts typed observations only after accepted builds and carries generated wrapper correspondence into later SCC replacements.
+5. Publishes `statement-pairs.md`, merged `observations.json`, and `statistics.json` under the stage artifacts directory together with the transformed project. Optional LLM exchanges are diagnostic artifacts.
+
+Keep replacement correspondence in stage state and leave any copied `proctor.toml` unchanged. Do not treat `observations.json` as a rule set. Synthesize and review rules separately with `crat-tool synthesize-rules` and `pretty-print-rules`, then provide the JSON rule document to a later run. The stage does not consume a test package or run tests itself; use the orchestrator's global gate when a suitable test package is available.
+
 ### Examples and fakes
 
 - Copy `stages/example-stage/` for a framework-free Python stage.

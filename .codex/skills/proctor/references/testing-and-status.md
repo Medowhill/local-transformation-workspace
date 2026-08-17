@@ -51,6 +51,7 @@ Run `uv run proctor validate -c <config>` for config/stage wiring and a focused 
 | `test_prompts.py` | Frontmatter, strict variables, versions, hashes |
 | `test_context.py` | Syntactic resolution, strategies, budgets |
 | `test_testing.py` | Target inference and cargo/test-package flow |
+| `test_local_transformation.py` | Skeleton protocol, SCC scheduling, LLM repair, rule fallback, replacement transactions, observations, statistics, and publication |
 | `test_example_stage.py` | Direct real subprocess contract behavior |
 | `tests/fake_stages/fake/` | Orchestration modes without toolchains |
 
@@ -120,6 +121,10 @@ Run `tests/test_testing.py` and orchestrator gating tests. Exercise executable a
 
 Run focused unit tests for extracted pure logic when available, then the relevant e2e smoke test. Run full translation e2e for changes to adapter handoff, `config.toml`, target discovery, manifest emission, or tool environment.
 
+### Local-transformation change
+
+Run `uv run pytest tests/test_local_transformation.py`. For changes to the Rust protocol or semantics, also run the matching Crat `cargo test -p tools <module>::tests` filter and `cargo test -p tools` when the public tools surface crosses modules. The current suite uses fake tools and LLM clients; no checked-in e2e test runs the complete local-transformation stage with a live model.
+
 ## End-to-end prerequisites
 
 Expect e2e tests to require:
@@ -151,11 +156,13 @@ Treat these as implemented and unit-tested:
 - syntactic Rust index and two retrieval strategies;
 - test-package build/run logic;
 - C2Rust and CRAT adapters;
+- local transformation with optional rule application, SCC-scoped LLM repair, structural validation, transactional Cargo-build acceptance, observation extraction, and statistics;
 - abstraction-recovery no-candidate skip scaffold.
 
 Treat these as planned or partial:
 
-- discipline repair and local transformation stages;
+- discipline repair;
+- automatic rule-set synthesis or update inside the local-transformation stage;
 - actual abstraction identification/transformation/LLM repair;
 - test-vector-to-test-package conversion and `proctor make-tests`;
 - bench test-package auto-synthesis;
@@ -182,4 +189,5 @@ When implementing a planned feature, read its focused plan document, but reconci
 - `target_plus_types` does not include callees.
 - OpenAI-compatible local servers may use no API key; Anthropic always requires its configured key env.
 - Abstraction recovery's scaffold validation is its own minimal implementation and should migrate to `proctor.testing.runner` if the stage takes a framework dependency.
+- Local transformation requires `[lib].path` to name one root-level source file after preparation, builds but does not run the test package, and leaves rule synthesis outside the stage.
 - Plans and README examples may name future models or milestones. Keep model names and prices in config, not code.

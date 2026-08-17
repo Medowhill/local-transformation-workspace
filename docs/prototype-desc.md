@@ -169,8 +169,9 @@ remaining transform labels.
 
 Dependencies are compiler-resolved, direct rather than transitive, sorted,
 and deduplicated. Foreign functions do not become transformable records or
-graph dependencies. Their resolved Rust declaration names are recorded only
-as advisory prompt context for the function that refers to them.
+graph dependencies. Their resolved Rust declaration names and distinct linked
+symbols for supported local C declarations are recorded only as advisory
+prompt context for the function that refers to them.
 
 Prompt-facing function headers omit explicit ABI syntax and `#[no_mangle]`.
 Every target function is shown as unsafe. Non-`ref` bindings are displayed as
@@ -205,6 +206,12 @@ types, assignment-side context, and resolved identities. Applicable rules are
 ranked deterministically, and replacements are materialized with retained
 source syntax and scope-aware type spelling. Every selected region in one
 statement must be covered; otherwise that statement remains unmodified.
+
+Region selection starts from eligible raw-pointer bindings and supported local
+C foreign calls. It retains inclusion-maximal disjoint subtrees in source
+order and transfers descendant pointer anchors, so regions may be anchorless.
+Foreign functions match by linked symbol but materialize through a matched or
+otherwise accessible Rust path.
 
 Target-context inference is deliberately narrow and limited to supported
 declarations, assignments, direct calls, returns, body tails, and aggregate
@@ -450,6 +457,10 @@ observation or rule parser, validator, merger, or synthesizer.
 Normalized integer magnitudes use canonical ASCII digits. Rules that are valid
 but need target context unavailable to current application remain in the rule
 set and are skipped until that context can be inferred.
+
+During synthesis, scan-family format literals remain concrete, so observations
+with incompatible formats do not produce a shared rule. Other string-like
+literals retain their ordinary generalization behavior.
 
 ## Supportedness and further reading
 

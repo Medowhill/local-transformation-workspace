@@ -1607,9 +1607,11 @@ array. Expected: that rule alone becomes an ordinary candidate miss, ranking
 reruns, label 0 becomes exactly `let value: i32 = 7_i32;` and is
 `rule_applied`, and label 1 remains exactly `let keep: i32 = 1;` with
 disposition `preserve` in both baseline and applied views. With the fallback
-removed, label 0 remains exactly `let value: i32 = ping();` with disposition
-`transform`; label 1 remains exactly `let keep: i32 = 1;` with disposition
-`preserve`, and processing still succeeds.
+removed, annotated source retains exactly `let value: i32 = ping();`, while
+both `baseline.skeleton` and the unapplied `applied.skeleton` contain the
+canonical `todo!()` transform hole for label 0 with disposition `transform`.
+Label 1 remains exactly `let keep: i32 = 1;` with disposition `preserve` in
+both views, and processing still succeeds.
 
 Independently, observation extraction still skips source/target macro labels as
 specified; the closed rule grammar itself has no macro constructor.

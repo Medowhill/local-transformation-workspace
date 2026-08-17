@@ -166,3 +166,13 @@ literals during synthesis.
 
 - [Detailed Amendment 6 plan](amendment-6-plan.md)
 - [Amendment 6 test plan](amendment-6-test-plan.md)
+
+## Amendment 7 (planned)
+
+Amendment 7 plans special whole-statement `printf` handling: conservative
+standard-Rust format conversion, canonical `::std::print!` skeletons, typed
+per-format-argument observations and rules, atomic application, and explicit
+mechanical-statement reporting without general macro support.
+
+- [Detailed Amendment 7 plan](amendment-7-plan.md)
+- [Amendment 7 test plan](amendment-7-test-plan.md)

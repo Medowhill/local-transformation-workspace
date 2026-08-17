@@ -18,6 +18,11 @@ together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
 
+A pending amendment entry is prospective and is not part of this history yet.
+After its implementation is complete, rename it to the ordinary amendment
+heading, change its summary to past tense, and extend the historical range
+above.
+
 Substantive text from the former consolidated plan is preserved in the linked
 detailed files. Imperative and future-tense wording in those files is
 historical. Material shared by several task sets is preserved in
@@ -156,3 +161,18 @@ baseline view for bounded LLM repair after a rule-involved build failure.
 
 - [Detailed Phase 7 plan](phase-7-plan.md)
 - [Phase 7 test plan](phase-7-test-plan.md)
+
+## Pending Amendment 6
+
+This prospective work would:
+
+- retain every inclusion-maximal expression region;
+- seed direct local C-ABI foreign calls and recognize their linked names;
+- permit version-1 observations and rules with no pointer anchors;
+- materialize foreign callees with valid Rust spellings; and
+- keep scan-family format literals rigid during rule synthesis.
+
+It has not been implemented or added to the history above.
+
+- [Detailed Amendment 6 plan](amendment-6-plan.md)
+- [Amendment 6 test plan](amendment-6-test-plan.md)

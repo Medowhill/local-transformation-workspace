@@ -70,7 +70,10 @@ For one stage invocation, the implementation:
 1. validates the stage envelope, configuration, Cargo layout, and
    non-overlapping filesystem boundaries;
 2. builds or reuses release `crat` and `crat-tool` binaries;
-3. copies the complete input project to `work/current`;
+3. copies the complete input project to `work/current` and ensures crates.io
+   dependencies on `bytemuck`, `xj_scanf`, and `proctor-libc` are declared at
+   minimum versions `1.25.2`, `0.2.6`, and `0.1.0`, respectively, preserving
+   their other dependency fields;
 4. runs ordinary Crat `expand` followed immediately by `unexpand`, with
    `--unexpand-use-print`;
 5. validates the optional rule document in Crat and generates immutable dual-

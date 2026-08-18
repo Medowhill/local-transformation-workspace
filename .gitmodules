@@ -1,3 +1,6 @@
 [submodule "proctor"]
 	path = proctor
 	url = https://github.com/Yale-PROCTOR/proctor/
+[submodule "proctor-libc"]
+	path = proctor-libc
+	url = https://github.com/Yale-PROCTOR/proctor-libc

@@ -37,8 +37,13 @@ Merge global `[llm]` with `[stages.<id>.llm]`, with stage values winning. Do not
 
 - `configs/example.toml`: one copy-through native stage; starts from Rust + tests.
 - `configs/llm_example.toml`: one example LLM stage; starts from Rust.
-- `configs/full_pipeline.toml`: C2Rust, CRAT, then abstraction recovery; starts from C + tests.
+- `configs/c2rust.toml`: C2Rust only; accepts a C project directory or tar archive.
+- `configs/c2rust_crat.toml`: C2Rust plus an explicit reduced CRAT pass list.
+- `configs/c2rust_crat_absrec.toml`: C2Rust, CRAT, then the live Claude Code abstraction-recovery stage.
+- `configs/full_pipeline.toml`: older C2Rust/CRAT/abstraction-recovery wiring whose scaffold comments are stale; reconcile it before relying on it.
 - `configs/c2rust_crat_local.toml`: C2Rust, a reduced CRAT pass chain, then local transformation; starts from C + an input rule set and uses a configured LLM.
+- `configs/bench.toml`: C2Rust/CRAT corpus runs without correctness verification.
+- `configs/bench_vectors.toml`: the same core flow with TRACTOR vector verification and per-stage comparison.
 - `tests/e2e/crat_smoke.toml`: CRAT only over the vendored C2Rust fixture, with test gating.
 - `tests/e2e/translation_smoke.toml`: C2Rust then CRAT, global gate disabled and final tests run explicitly.
 
@@ -53,7 +58,7 @@ proctor validate -c CFG [--set ...] [--root ...]
 proctor stages   -c CFG
 proctor run      -c CFG --input-c/--input-rust/--tests/--rule-set
 proctor resume   RUN_DIR [--from STAGE]
-proctor bench    -c CFG --corpus DIR [--jobs N]
+proctor bench    -c CFG --corpus DIR [--jobs N] [--match REGEX] [--name NAME]
 proctor report   PATH... [--group-by stage,model] [--format table|csv|json]
 proctor warmup   -c CFG
 ```
@@ -111,6 +116,8 @@ rule_set -> rules
 Override under `[bench.layout]`; select worker count under `[bench] jobs`. Bench writes a parent `bench.json` and keeps each case as a complete run directory. Exceptions and failures remain isolated per case.
 
 Only `rule_set_policy = "independent"` is implemented. Reject `chained` and `merge-per-round`.
+
+Set `[bench] verify_vectors = true` to run the vendored TRACTOR `runtests.rust` harness on the final Rust-producing stage after each case; set `verify_all_stages = true` to compare every Rust-producing stage. Library cases require a writable copy of the containing TRACTOR Cargo workspace, while binary cases can use an isolated case. Treat this as verification and reporting: `bench.json` records `vectors_ok`, but `BenchResult.ok` and the CLI exit code currently reflect pipeline-run success, not vector failures.
 
 ## LLM client
 

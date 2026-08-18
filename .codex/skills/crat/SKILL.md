@@ -1,6 +1,6 @@
 ---
 name: crat
-description: "Domain guide for Crat's `crat` pass/analysis CLI and `crat-tool` local-transformation utilities, including rustc-private APIs and shared pointer analysis. Use when modifying or understanding Crat passes, configs, analyses, pointer decisions or rewrites, skeleton generation, structural validation, safety normalization, item replacement, observation extraction, rule synthesis or application, or generated Rust transformations."
+description: "Domain guide for Crat's `crat` pass/analysis CLI and `crat-tool` local-transformation utilities, including rustc-private APIs and shared pointer analysis. Use when modifying or understanding Crat passes, configs, analyses, pointer decisions or rewrites, skeleton generation, structural validation, safety normalization, item replacement, printf lowering, observation extraction, rule synthesis or application, or generated Rust transformations."
 ---
 
 # Crat
@@ -10,7 +10,7 @@ description: "Domain guide for Crat's `crat` pass/analysis CLI and `crat-tool` l
 Read only the references required for the task:
 
 - Read [crat.md](references/crat.md) for the `crat` CLI, pass pipeline, standalone analyses, configs, dependency side effects, or non-pointer transformation code.
-- Read [crat-tool.md](references/crat-tool.md) for `crat-tool`, `crates/tools`, skeleton records and rule-applied views, preservation labels, structural validation, safety normalization, item replacement, observations, or rules.
+- Read [crat-tool.md](references/crat-tool.md) for `crat-tool`, `crates/tools`, skeleton records and rule-applied views, preservation labels, structural validation, safety normalization, item replacement, deterministic `printf` lowering, observations, or rules.
 - Read [pointer.md](references/pointer.md) together with `crat.md` for the ordinary pointer pass or `pointer_replacer` work.
 - Read [pointer.md](references/pointer.md) together with `crat-tool.md` for skeleton target types, initial pointer decisions, rule type context, or changes to shared pointer analysis used by the tools.
 

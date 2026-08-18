@@ -13,27 +13,23 @@
 
 Treat Proctor as shared infrastructure for experiments that turn a TRACTOR-format C project into progressively safer Rust. The framework supplies orchestration, reproducibility, a vendor-neutral LLM client, usage accounting, prompt management, Rust context retrieval, and test-package execution. Each transformation stage remains an independently executable program and may use none of the shared libraries.
 
-The checked-in configs expose two active paths:
+The checked-in configs expose a translation core and two experimental branches:
 
 ```text
-C project + test package
+C project or tar archive
         |
         v
 c2rust-adapter -> unsafe Rust + config.toml
         |
         v
 crat-adapter   -> symbolic pass chain + proctor.toml
+        |\
+        | +-> abstraction-recovery -> narrow Claude-driven Vec recovery
         |
-        v
-abstraction-recovery -> currently skips because candidate discovery is a scaffold
-
-C project + rule set
-        |
-        v
-c2rust-adapter -> crat-adapter -> local-transformation
+        +----> local-transformation -> pointer-directed local rewriting
 ```
 
-Use `configs/full_pipeline.toml` for the abstraction-recovery scaffold and `configs/c2rust_crat_local.toml` for the local-transformation prototype. Discipline repair remains a design item and has no stage implementation.
+Use `configs/c2rust_crat.toml` for the translation core, `configs/c2rust_crat_absrec.toml` for the live abstraction-recovery experiment, and `configs/c2rust_crat_local.toml` for the local-transformation prototype. The older `configs/full_pipeline.toml` comments and `tests/e2e/test_full_pipeline.py` still assume abstraction recovery is a no-op scaffold; do not use them as evidence of current stage behavior. Discipline repair remains a design item and has no stage implementation.
 
 Although early plans describe one Translation component, the implementation exposes C2Rust and CRAT as two stages. CRAT completes the component by creating `proctor.toml`.
 
@@ -43,7 +39,7 @@ Use these four framework artifact kinds:
 
 | Kind | Meaning | Runner/stage behavior |
 |---|---|---|
-| `c_project` | TRACTOR-format C project | Normally supplied by the runner; never produced |
+| `c_project` | TRACTOR-format C project directory or adapter-supported tar archive | Normally supplied by the runner; never produced |
 | `rust_project` | Cargo project moving through transformations | May be supplied or produced |
 | `test_package` | Executable `run_test.sh` plus `test_data/` | Normally supplied; not currently producible |
 | `rule_set` | Opaque local-transformation rules file | May be supplied or produced by the framework contract; the current local stage only consumes it |
@@ -77,7 +73,10 @@ Use this map to find the smallest owning surface:
 | `proctor/context/` | Rust index cache, target resolution, retrieval strategies |
 | `crates/proctor-rust-index/` | `syn`-based Rust item/edge indexer |
 | `proctor/testing/runner.py` | Cargo build, artifact inference, test-package invocation |
+| `proctor/testing/vector_harness.py` | TRACTOR `runtests.rust` invocation and JUnit parsing |
+| `proctor/testing/vector_compare.py` | Final or per-stage vector verification over run outputs |
 | `stages/*-adapter/` | Envelope shims around pinned upstream tools |
+| `stages/abstraction-recovery/` | Direct Claude Code identification, localized Vec rewriting, compile repair, and fail-open policy |
 | `stages/local-transformation/` | SCC scheduling, prompt/repair loop, Crat tool protocol, transactional builds, observations, and statistics |
 | `stages/example-stage/` | Minimal framework-independent stage template |
 | `stages/example-llm-stage/` | Shared LLM/tracker/prompt integration example |
@@ -147,3 +146,4 @@ Plans explain why the code has its shape but contain milestones and examples tha
 - Kill the entire spawned process group on timeout because stages launch Cargo/rustc children.
 - Record upstream tool pins through git submodules; keep upstream repositories separate from adapter code.
 - Keep normal unit tests independent from external APIs, real CRAT/C2Rust builds, and network access.
+- Keep TRACTOR vector verification outside the stage contract. Bench may verify final or per-stage Rust outputs after ordinary runs, but stages do not receive raw test vectors.

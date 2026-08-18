@@ -3,7 +3,7 @@
 ## Scope and ownership
 
 - Start with `src/bin/crat-tool.rs` for CLI arguments and file I/O, and `crates/tools/src/lib.rs` for the public Rust API.
-- Keep `crat-tool` thin. Put Rust parsing, compiler analysis, validation, rewriting, observation extraction, and rule logic in `crates/tools`.
+- Keep `crat-tool` thin. Put Rust parsing, compiler analysis, validation, rewriting, deterministic `printf` lowering, observation extraction, and rule logic in `crates/tools`.
 - Keep SCC scheduling, prompt/context construction, LLM requests, transactional Cargo builds, repair attempts, and usage accounting in PROCTOR's Python local-transformation stage. Do not move that orchestration into `crat-tool`.
 - Treat tests and current source as authoritative; the prototype plans contain useful rationale but may describe later or superseded behavior.
 
@@ -13,7 +13,7 @@
 
 - Command: `crat-tool make-skeleton --output <records.json> [--rules <rules.json>] <input-project>`.
 - Locate the project's library with `utils::find_lib_path`, compile it with `run_compiler_on_path`, call `tools::make_skeletons_with_rules`, and serialize the result with `skeletons_to_json`.
-- Parse the optional schema-version-1 rule document strictly. Emit both a baseline view and an applied view; without rules, the views are equivalent.
+- Parse the optional schema-version-1 rule document strictly, including both `rules` and `printf_rules`. Emit both a baseline view and an applied view; without rules, the views are equivalent.
 - Keep file-system work in the binary; keep record construction in `crates/tools/src/skeleton.rs`.
 
 ### Validate
@@ -46,10 +46,17 @@
 - Use `crates/tools/src/skeleton.rs` for deterministic `ItemRecord` generation. Include source-defined free functions except `main`, plus contextual statics, constants, type aliases, enums, structs, and unions; omit modules, uses, foreign items, and other unsupported item kinds as records.
 - Preserve recursive inline-module source order and assign numeric IDs from that order. Use crate-relative paths to distinguish identical final names.
 - For functions, emit `annotated_source`, source/target signatures, direct and signature dependencies, resolved foreign function names, and `baseline`/`applied` `SkeletonView` values.
-- Keep each view self-contained: include its skeleton, `needs_transformation`, recursive statement dispositions (`preserve`, `preserve_shell`, `transform`, or `rule_applied`), and statement-pair metadata for remaining transform labels.
+- Keep each view self-contained: include its skeleton, `needs_transformation`, recursive statement dispositions (`preserve`, `preserve_shell`, `transform`, `rule_applied`, or `mechanical`), and statement-pair metadata for reportable transform/mechanical labels.
 - Sanitize prompt-facing ABI and `no_mangle`, display non-`ref` bindings as mutable, label source statements, and make the target skeleton unsafe.
 - Preserve statements whose compiler-resolved types and expressions remain valid. Replace required payloads with parseable placeholders; in the applied view, replace a transform region only when one rule covers every selected expression in that region and the result passes structural checks.
 - Return `GenerationError` for unsupported body shapes such as empty statements, function-local items, non-block match arms, invalid nested controls, or an AST/HIR mapping mismatch.
+
+## Deterministic `printf` lowering
+
+- Use `crates/tools/src/printf.rs` for compiler-resolved eligibility, C-format conversion, canonical `::std::print!` templates, and template validation.
+- Lower only supported calls to the local non-unwinding C-variadic `printf` symbol with a recoverable literal format. Keep unsupported calls on the ordinary transformation path.
+- Mark a converted call with no value arguments as `mechanical`; its complete print statement bypasses the LLM but still goes through replacement and Cargo-build acceptance. Keep argument-bearing templates as `transform` regions with trusted format metadata and `todo!()` value holes, or as `rule_applied` when every argument is covered.
+- Keep `printf_template` metadata internal to the skeleton/replacement protocol. Do not expose it as editable prompt content or accept an altered format, placeholder count, or mechanical payload.
 
 ## Validation and preservation
 
@@ -74,7 +81,7 @@
 
 - Use `crates/tools/src/observation.rs` for replacement metadata, callable correspondence, typed expression extraction, pointer anchors, semantic identities, source-region selection, and canonical observation documents.
 - Keep extraction downstream of successful candidate compilation. Validate sidecar digests and accepted/current item correspondence before trusting the synthetic observation source.
-- Use `crates/tools/src/rule.rs` for strict schema-version-1 observation/rule documents, deterministic merging and synthesis, rule matching, specificity, substitution cost, and semantic canonicalization; use `rule/markdown.rs` only for presentation.
+- Use `crates/tools/src/rule.rs` for strict schema-version-1 observation/rule documents, deterministic merging and synthesis, rule matching, specificity, substitution cost, and semantic canonicalization; use `rule/markdown.rs` only for presentation. Keep the ordinary `observations`/`rules` and format-specific `printf_observations`/`printf_rules` arrays present and distinct.
 - Keep rule application inside skeleton generation. A rule-applied candidate remains provisional: PROCTOR may fall back from the applied view to the baseline view when the candidate does not compile.
 
 ## Focused verification
@@ -82,6 +89,7 @@
 - Run `cargo test -p tools skeleton::tests` for record, annotation, target-type, or preservation-classification changes.
 - Run `cargo test -p tools validator::tests` for validation or diagnostic changes.
 - Run `cargo test -p tools item_replacer::tests` for normalization, replacement, wrappers, conversions, or call rewriting.
+- Run `cargo test -p tools printf::tests` for `printf` recognition, format conversion, or print-template validation.
 - Run `cargo test -p tools observation::tests` for observation source, metadata, correspondence, region selection, or extraction changes.
 - Run `cargo test -p tools rule::tests` for document validation, synthesis, matching, ordering, or Markdown changes.
 - Run `cargo test -p tools` for shared preservation or public tools API changes.

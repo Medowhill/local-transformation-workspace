@@ -1,11 +1,17 @@
 ---
 name: proctor
-description: Repository onboarding and implementation guidance for the PROCTOR C-to-Rust orchestration framework. Use when working in this repository on pipeline configuration, stage contracts or adapters, orchestration and resume behavior, LLM providers and usage tracking, prompt/context infrastructure, test-package execution, local transformation and rule integration, benchmarks, end-to-end translation, documentation, debugging, reviews, or planning changes against the current implementation.
+description: Repository onboarding and implementation guidance for the PROCTOR C-to-Rust orchestration framework. Use when working in this repository on pipeline configuration, stage contracts or adapters, orchestration and resume behavior, LLM providers and usage tracking, prompt/context infrastructure, test-package or TRACTOR-vector execution, abstraction recovery, local transformation and rule integration, benchmarks, end-to-end translation, documentation, debugging, reviews, or planning changes against the current implementation.
 ---
 
 # Proctor
 
 Use this skill as the repository map for the PROCTOR orchestration framework. Start from the current code and tests; treat `plan_docs/` as design intent and deferred work unless the implementation confirms otherwise.
+
+## Work at the PROCTOR root
+
+- Locate the standalone PROCTOR root by `pyproject.toml`, the `proctor/` package, and `stages/`; in the enclosing research workspace it is `proctor/` rather than the workspace root.
+- Resolve all paths in this skill relative to that root and inspect its own git/submodule status before editing.
+- Keep the repository self-contained. Do not make its code, tests, configs, fixtures, or tooling depend on the enclosing workspace's plans or helper files.
 
 ## Route the task
 
@@ -56,10 +62,10 @@ Keep the upstream `stages/c2rust/` and `stages/crat/` submodules unmodified unle
 ### Change local transformation
 
 1. Read [contracts-and-stages.md](references/contracts-and-stages.md), then use the `$crat` skill for changes that cross into `crat-tool` or shared pointer analysis.
-2. Keep SCC scheduling, prompts, LLM repair, transactional Cargo builds, artifacts, and usage accounting in `stages/local-transformation/`; keep compiler-resolved structure, replacement, observations, and rules in Crat.
+2. Keep SCC scheduling, prompts, LLM repair, transactional Cargo builds, dependency preparation, artifacts, and usage accounting in `stages/local-transformation/`; keep compiler-resolved structure, replacement, trusted `printf` templates, observations, and rules in Crat.
 3. Preserve the dual skeleton views: try optional rule applications through the applied view, but fall back to the baseline view for the whole SCC after a rule-involved candidate fails to compile.
 4. Treat the input rule set as read-only. Keep replacement correspondence in stage state rather than `proctor.toml`; the stage produces a Rust project and diagnostic/learning artifacts, not a new rule set.
-5. Accept a replacement only after structural validation when LLM output is used and a transactional `cargo build` succeeds. Extract observations only from accepted candidates.
+5. Accept a replacement only after structural validation when LLM output is used and a transactional `cargo build` succeeds. Let SCCs whose selected views need no LLM work—because rules and/or mechanical conversions completed them—bypass the LLM and validator, but not replacement or build acceptance. Extract observations only from accepted transform regions.
 6. Run `tests/test_local_transformation.py` and the focused Crat `tools` tests for the Rust surface you changed.
 
 ### Change the stage contract
@@ -107,10 +113,12 @@ uv run ruff format --check .
 uv run mypy proctor
 ```
 
-Run `uv run pytest -m e2e` only when the affected adapter, real CRAT/C2Rust flow, or Rust index requires it and prerequisites are available. Validate configs with `uv run proctor validate -c <config>` before expensive runs.
+Run `uv run pytest -m e2e` only when the affected adapter, real CRAT/C2Rust flow, Rust index, or TRACTOR vector harness requires it and prerequisites are available. Validate configs with `uv run proctor validate -c <config>` before expensive runs.
 
 ## Avoid stale assumptions
 
-Do not present these planned items as implemented: discipline repair, test-vector conversion or `make-tests`, per-stage `gate_tests`, test packages as stage-produced artifacts, chained/merge bench rule-set policies, automatic intermediate pruning, token-rate or budget enforcement, `prompts.lock`, or `check-stage`.
+Do not present these planned items as implemented: discipline repair, test-vector-to-test-package conversion or `make-tests`, per-stage `gate_tests`, test packages as stage-produced artifacts, chained/merge bench rule-set policies, automatic intermediate pruning, token-rate or budget enforcement, `prompts.lock`, or `check-stage`.
+
+Do not describe abstraction recovery as an unimplemented scaffold. A narrow direct-Claude implementation exists for function-local manual dynamic arrays, although its older default config comments and full-pipeline E2E still assume scaffold-style skipping.
 
 Do not assume the global post-stage test gate is safe after C2Rust: executable cases are still library-shaped until CRAT's `bin` pass.

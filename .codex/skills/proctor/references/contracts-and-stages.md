@@ -128,7 +128,7 @@ Use `stages/c2rust-adapter/`, not the upstream submodule, for framework integrat
 
 The adapter:
 
-1. Finds the TRACTOR project root containing `CMakeLists.txt`.
+1. Accepts a TRACTOR project directory or tar archive, extracts archives into stage work, and finds one root containing `CMakeLists.txt`.
 2. Runs CMake file-api configuration and reads the codemodel.
 3. Discovers public library functions from project headers through libclang.
 4. Filters the compilation database to real executable/shared-library targets.
@@ -141,7 +141,7 @@ Its output is library-shaped even for eventual executables. Do not run executabl
 
 ### CRAT adapter
 
-Use `stages/crat-adapter/` for framework integration. It builds the pinned rustc-private CRAT tool once per submodule commit, constructs its sysroot/Z3 environment, and runs a cumulative pass chain ending at configurable `final_pass` (default `bin`).
+Use `stages/crat-adapter/` for framework integration. It builds the pinned rustc-private CRAT tool once per submodule commit, constructs its sysroot/Z3 environment, and either runs the cumulative chain ending at configurable `final_pass` (default `bin`) or the exact ordered `passes` list. Use `pass_args.<pass>` only for selected passes; do not configure `passes` and `final_pass` together.
 
 The defined chain is:
 
@@ -155,7 +155,9 @@ After copying the final pass output, emit `proctor.toml` from CRAT `config.toml`
 
 ### Abstraction recovery
 
-Treat `stages/abstraction-recovery/` as a native-stage scaffold, not a completed transformer. Candidate discovery returns no candidates, so the stage currently reports `skipped`. The intended fail-open loop is present, but identification, transformation, LLM repair, and usage reporting remain TODO.
+Treat `stages/abstraction-recovery/` as a narrow live experiment, not a general abstraction-recovery implementation. It invokes the `claude` CLI directly to identify a small number of self-contained function-local manual dynamic arrays, rewrites them to `Vec` while preserving exact signatures and exported linkage, runs release Cargo builds, and performs bounded compiler-error repair.
+
+No candidates or exhausted repair reports `skipped` by default so the orchestrator forwards the input; `on_give_up = "fail"` makes exhaustion fatal. The stage does not consume test vectors, run the test package, use the shared `LlmClient`/per-attempt usage log, or broaden recovery beyond the current Vec case. It requires `claude` on PATH and `ANTHROPIC_API_KEY`. Do not infer the old scaffold behavior from `configs/full_pipeline.toml` or its E2E test.
 
 ### Local transformation
 
@@ -163,11 +165,11 @@ Use `stages/local-transformation/` for the implemented local pointer-transformat
 
 The stage:
 
-1. Copies the input, prepares one expanded/unexpanded root library with Crat, generates dual baseline/rule-applied skeleton views, normalizes function safety, and performs an initial Cargo build.
-2. Schedules functions by leaf-first call-graph SCCs. It starts from rule-applied skeletons, skips the LLM when the entire SCC is complete, and otherwise asks the LLM only for remaining transform regions.
+1. Copies the input, adds or raises crates.io requirements for `bytemuck`, `xj_scanf`, and `proctor-libc` while preserving non-registry dependencies, prepares one expanded/unexpanded root library with Crat, generates dual baseline/rule-applied skeleton views, normalizes function safety, and performs an initial Cargo build.
+2. Schedules functions by leaf-first call-graph SCCs. It starts from rule-applied skeletons, skips the LLM when rules and/or mechanical conversions leave no transform region in the SCC, and otherwise asks the LLM only for remaining regions. Crat lowers eligible literal `printf` calls to trusted `::std::print!` templates; zero-argument templates are mechanical and value arguments may be learned or filled.
 3. Structurally validates LLM output, replaces the SCC through `crat-tool`, and installs each candidate transactionally around `cargo build`. A rule-involved compile failure retries from the baseline view for the entire SCC.
 4. Extracts typed observations only after accepted builds and carries generated wrapper correspondence into later SCC replacements.
-5. Publishes `statement-pairs.md`, merged `observations.json`, and `statistics.json` under the stage artifacts directory together with the transformed project. Optional LLM exchanges are diagnostic artifacts.
+5. Publishes `statement-pairs.md`, merged `observations.json` (including the required `printf_observations` array), and `statistics.json` under the stage artifacts directory together with the transformed project. Optional LLM exchanges are diagnostic artifacts.
 
 Keep replacement correspondence in stage state and leave any copied `proctor.toml` unchanged. Do not treat `observations.json` as a rule set. Synthesize and review rules separately with `crat-tool synthesize-rules` and `pretty-print-rules`, then provide the JSON rule document to a later run. The stage does not consume a test package or run tests itself; use the orchestrator's global gate when a suitable test package is available.
 

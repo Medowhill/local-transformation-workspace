@@ -13,7 +13,7 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--7 and Amendments 1--6 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--7 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
@@ -167,12 +167,14 @@ literals during synthesis.
 - [Detailed Amendment 6 plan](amendment-6-plan.md)
 - [Amendment 6 test plan](amendment-6-test-plan.md)
 
-## Amendment 7 (planned)
+## Amendment 7
 
-Amendment 7 plans special whole-statement `printf` handling: conservative
+Amendment 7 added special whole-statement `printf` handling: conservative
 standard-Rust format conversion, canonical `::std::print!` skeletons, typed
 per-format-argument observations and rules, atomic application, and explicit
-mechanical-statement reporting without general macro support.
+mechanical-statement reporting without general macro support. Compiler-proven
+eligibility is retained as strict internal skeleton metadata so validation and
+replacement do not infer provenance from source spelling.
 
 - [Detailed Amendment 7 plan](amendment-7-plan.md)
 - [Amendment 7 test plan](amendment-7-test-plan.md)

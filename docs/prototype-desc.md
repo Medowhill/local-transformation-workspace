@@ -124,8 +124,8 @@ not be absolute or escape the crate root.
   closed, canonical rule document;
 - `pretty-print-rules` validates one rule document and writes a human-readable
   Markdown bullet list;
-- `merge-observations` validates and concatenates ordinary observation
-  documents in argument and member order.
+- `merge-observations` validates and concatenates both observation families in
+  argument and member order.
 
 Filesystem I/O and command dispatch remain thin CLI responsibilities.
 Skeleton generation, validation, preservation, and replacement are in the
@@ -164,8 +164,8 @@ foreign-function names, and two complete skeleton views. The `baseline` view
 contains the ordinary analysis result. The `applied` view has the same label
 topology and signature but includes every statement that was completely fixed
 by selected rules. Each view carries its own skeleton, transformation flag,
-recursive statement-disposition forest, and statement-pair metadata for its
-remaining transform labels.
+recursive statement-disposition forest, and statement-pair metadata for labels
+included in the diagnostic report.
 
 Dependencies are compiler-resolved, direct rather than transitive, sorted,
 and deduplicated. Foreign functions do not become transformable records or
@@ -207,6 +207,12 @@ ranked deterministically, and replacements are materialized with retained
 source syntax and scope-aware type spelling. Every selected region in one
 statement must be covered; otherwise that statement remains unmodified.
 
+Supported whole-statement calls to the exact local C `printf` declaration are
+converted to canonical `::std::print!` templates. Their consuming arguments
+use a separate rule family keyed by the exact format specifier and source
+types. Every argument must be covered before the statement is installed;
+otherwise the complete statement remains LLM work.
+
 Region selection starts from eligible raw-pointer bindings and supported local
 C foreign calls. It retains inclusion-maximal disjoint subtrees in source
 order and transfers descendant pointer anchors, so regions may be anchorless.
@@ -230,26 +236,32 @@ Source and target statements receive matching depth-first numeric
 - `preserve_shell`, meaning Crat has proved the statement's own declaration or
   control shell while nested labeled statement groups remain independently
   classified;
-- `transform`, meaning its payload remains work for an LLM; or
+- `transform`, meaning its payload remains work for an LLM;
 - `rule_applied`, meaning rule application replaced the complete statement's
   selected regions atomically and its canonical applied payload must be
-  retained.
+  retained; or
+- `mechanical`, meaning Crat completed a fixed transformation without a rule
+  or LLM, currently a supported `printf` statement with no consuming format
+  arguments.
 
 Preservation is deliberately conservative. Missing AST/HIR mappings, sensitive
 pointer-containing types, changed call signatures, unsafe or unresolved
-callables, macros, mutable statics, unions, closures, inline assembly, and
-other uncertain constructs require transformation. For `preserve_shell`, this
-proof applies to the statement's own payload while nested labeled statements
-remain independently classified.
+callables, unsupported macros, mutable statics, unions, closures, inline
+assembly, and other uncertain constructs require transformation. Generated
+print templates are the sole supported statement-macro shape and are checked
+against compiler-derived format and argument metadata. For `preserve_shell`,
+the preservation proof applies to the statement's own payload while nested
+labeled statements remain independently classified.
 
 A fully preserved parent cannot contain any non-preserved descendant.
-Preserved statements retain the canonical view subtree. Preserved-shell and
-rule-applied statements retain their canonical payload while recursively
-exposing independently classified descendants. Transformed statements retain
-their structural role and control shape but replace relevant payloads with
-parseable `todo!()` holes. Only `transform` requires LLM work. The two views
-must have identical statement labels, parent/child topology, and function
-signatures; the baseline cannot contain `rule_applied`.
+Preserved and mechanical statements retain the canonical view subtree.
+Preserved-shell and rule-applied statements retain their canonical payload
+while recursively exposing independently classified descendants. Transformed
+statements retain their structural role and control shape but replace relevant
+payloads with parseable `todo!()` holes. Only `transform` requires LLM work.
+The two views must have identical statement labels, parent/child topology,
+function signatures, and mechanical payloads; the baseline cannot contain
+`rule_applied`.
 
 An ordinary `if` may occur beneath a non-control expression wrapper only in a
 restricted C-conditional-like form: it must have an `else`, each branch must
@@ -411,12 +423,18 @@ separate labeled source and callable correspondence to extract a typed
 observation document. PROCTOR retains accepted documents opaquely; failed,
 superseded, and rule-complete attempts contribute none.
 
+For an accepted print transformation, Crat recovers each user argument through
+rustc's expanded `FormatArgs` mapping and emits one typed observation per
+consuming format argument. Recovery is all-or-nothing: an uncertain mapping or
+nested target macro suppresses every print observation for that statement.
+
 Success copies the final current project and publishes deterministic
 `statement-pairs.md`, `observations.json`, and `statistics.json` artifacts under
 `outputs.artifacts_dir`, or under `framework.workdir` when no artifact directory
 is present. Ordered by item and statement, the report pairs prompt-facing
 source statements with accepted canonical replacements and relevant source and
-target pointer types; it warns when binding metadata is incomplete. Stale
+target pointer types. The report includes mechanical conversions as well as
+LLM-transformed statements and warns when binding metadata is incomplete. Stale
 artifact files or symlinks are cleared at invocation start, and final copying
 and publication are one cleanup transaction. Failure reports no usable
 outputs. The report is diagnostic and does not extract or apply reusable rules.
@@ -453,6 +471,10 @@ deduplicates, and sorts the candidates. The thin `crat-tool synthesize-rules`
 command validates its inputs and atomically writes the result; valid inputs
 with no candidate rules produce an empty document. Python contains no
 observation or rule parser, validator, merger, or synthesizer.
+
+Observation and rule documents contain separate ordinary and printf-specific
+arrays. Synthesis never pairs across the two families; printf rules require an
+identical source format specifier and source types.
 
 Normalized integer magnitudes use canonical ASCII digits. Rules that are valid
 but need target context unavailable to current application remain in the rule

@@ -178,3 +178,13 @@ replacement do not infer provenance from source spelling.
 
 - [Detailed Amendment 7 plan](amendment-7-plan.md)
 - [Amendment 7 test plan](amendment-7-test-plan.md)
+
+## Amendment 8 (planned)
+
+Amendment 8 plans an ordinary Crat `prepare` pass that block-wraps every
+non-block match arm and lifts function-local statics with compiler-resolved,
+deterministic collision renaming. Only the local pipeline selects the pass;
+adapter defaults and libc behavior remain unchanged.
+
+- [Detailed Amendment 8 plan](amendment-8-plan.md)
+- [Amendment 8 test plan](amendment-8-test-plan.md)

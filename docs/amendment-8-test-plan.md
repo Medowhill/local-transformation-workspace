@@ -89,6 +89,12 @@ the CLI boundary. An outer compiler `Err` remains the existing compiler
 failure path; it is never relabeled as a `PrepareError` or prefixed with
 `prepare failed:`.
 
+Unsupported direct async functions use
+`PrepareError::UnsupportedAsyncFunction` and name the function. Unsupported
+`no_implicit_prelude` or source-authored/custom prelude imports use
+`PrepareError::UnsupportedPrelude` and name the rejected construct. These
+checks run on the expanded AST before the shared AST/HIR mapper.
+
 All analysis, dependency validation, name allocation, and required AST/HIR
 mapping validation finish before mutation or output. Thus every error is
 crate-atomic: no arm is wrapped, static removed, identifier rewritten, or
@@ -391,6 +397,15 @@ fn outer() {
 All three move before `outer`, the module-level ancestor. The local function
 itself remains local and outside this feature's scope.
 
+### A8-LIFT-03A `direct_async_functions_are_rejected_before_mapping`
+
+Use separate compiling inputs containing an async free function, async local
+function, async impl method, provided async trait method, and required async
+trait function. Each outer compiler result is `Ok`; `prepare` returns
+`PrepareError::UnsupportedAsyncFunction` naming that exact function before the
+shared AST/HIR mapper runs, and returns no source. The async block in
+A8-LIFT-03 remains supported because it is nested in a non-async function.
+
 ### A8-LIFT-04 `lifts_method_statics_before_containing_item`
 
 Input:
@@ -529,13 +544,14 @@ value name at its destination module. Otherwise candidates are exactly
 original crate-binder set, the active implicit-prelude value names for the
 destination module, and earlier allocations.
 
-Active implicit-prelude names are allocation-only reservations. Derive them
-from compiler resolution for each destination module, honoring edition,
-`no_std`, `no_implicit_prelude`, and a compiler-supported custom prelude; never
-hardcode a `std`/`core` name list. They do not contribute crate-binder
-multiplicity, but matching an original static name is independently a
-collision and requires renaming. Prelude names also reserve generated
-candidates.
+Active implicit-prelude names are allocation-only reservations. Derive the
+compiler-injected standard prelude names from compiler resolution, honoring
+edition and `no_std`; never hardcode a `std`/`core` name list.
+`no_implicit_prelude` and source-authored/custom prelude imports are rejected
+by A8-NAME-12 before this analysis. Prelude names do not contribute
+crate-binder multiplicity, but matching an original static name is
+independently a collision and requires renaming. Prelude names also reserve
+generated candidates.
 
 ### A8-NAME-01 `value_item_binders_force_rename`
 
@@ -833,7 +849,7 @@ static names, so output contains `static None_0`, `static drop_0`, and
 output compiles as `no_std`. The test contains no hardcoded list of
 standard-prelude paths or DefIds.
 
-### A8-NAME-12 `disabled_and_custom_preludes_follow_resolution`
+### A8-NAME-12 `unsupported_prelude_configurations_are_rejected`
 
 First input:
 
@@ -846,16 +862,17 @@ fn f() -> i32 {
 }
 ```
 
-Expected analysis: the destination module has no implicit-prelude reservation
-for `None` or `drop`; each crate-binder multiplicity is one and both statics
-lift unchanged.
+Expected: the outer compiler succeeds and `prepare` returns
+`PrepareError::UnsupportedPrelude` naming `#[no_implicit_prelude]` before
+AST/HIR mapping or mutation. Repeat with the attribute on a nested module to
+prove the rejection rule is any source AST occurrence, not only a crate-root
+inner attribute.
 
 On the pinned compiler supporting its internal custom-prelude attribute, also
 use this compiler fixture:
 
 ```rust
 #![feature(prelude_import)]
-#![no_implicit_prelude]
 mod custom_prelude { pub static NAME_0: i32 = 0; }
 #[prelude_import]
 use crate::custom_prelude::*;
@@ -863,42 +880,12 @@ fn reserve(NAME: i32) { let _ = NAME; }
 fn f() -> i32 { static NAME: i32 = 1; NAME }
 ```
 
-Expected analysis obtains `NAME_0` from the compiler's active custom-prelude
-resolution and includes it in the destination's allocation reservations. The
-compiler-recognized `#[prelude_import]` is prelude machinery rather than an
-ordinary crate-owned import binder; an ordinary source `use ...::*` remains
-covered by A8-NAME-02. No prelude entry contributes binder multiplicity.
-Because `NAME` collides with `reserve`'s parameter and candidate `NAME_0` is
-occupied by the active custom prelude, output is
-`static NAME_1: i32 = 1; fn f() -> i32 { NAME_1 }`. If the pinned compiler's
-test harness cannot author a custom prelude directly, exercise the same
-resolved prelude-entry input through the internal analysis seam; do not replace
-it with a hardcoded production name list.
-
-Independently prove suffix reservation at the allocation helper's internal
-seam with this compiling source shape:
-
-```rust
-fn reserve(NAME: i32) { let _ = NAME; }
-fn f() -> i32 { static NAME: i32 = 1; NAME }
-```
-
-Provide the analyzed allocation inputs exactly as follows:
-
-```text
-crate-owned binders named NAME = {reserve::NAME, f::NAME}
-crate-owned binders named NAME_0 = {}
-earlier allocated names = {}
-active prelude ValueNS names at f's destination module = {NAME_0}
-```
-
-Expected allocation is `f::NAME -> NAME_1`, and the transformed definition and
-bound use are `static NAME_1: i32 = 1;` and `fn f() -> i32 { NAME_1 }`. The
-control input with the same crate-owned sets but an empty active-prelude set
-allocates `NAME_0`. Thus no crate-owned `NAME_0` binder can explain the skip;
-the active destination-prelude reservation independently does so. This is a
-test-only call to the internal allocator with an already compiler-classified
-prelude-name set, not permission to hardcode `NAME_0` in production.
+Expected: the outer compiler succeeds and `prepare` returns
+`PrepareError::UnsupportedPrelude` naming the source-authored
+`#[prelude_import]` before AST/HIR mapping or mutation. The exact detection
+oracle is a non-dummy-spanned expanded AST item carrying the attribute; rustc's
+ordinary dummy-spanned compiler-injected `std`/`core` prelude remains accepted.
+An ordinary unmarked source `use ...::*` remains covered by A8-NAME-02.
 
 ## 8. Compiler-identity use rewriting
 
@@ -1141,6 +1128,28 @@ fn f() -> usize {
 Expected: `DATA` lifts successfully and keeps its fully qualified paths. An
 unrelated local import does not cause blanket rejection.
 
+### A8-DEP-08A `rejects_qualified_paths_through_scoped_bindings`
+
+Use separate compiling inputs whose local static initializer refers through:
+
+- a block-scoped module alias, such as `use crate::source as local; local::N`;
+- a block-scoped type alias/import, such as `use crate::source::Holder as Local;
+  Local::N`;
+- a block-scoped glob that introduces a module or type alias subsequently used
+  as the first segment of a qualified path; and
+- a local `type Local = crate::source::Holder; Local::N` alias.
+
+Each case returns `Err(DATA, <actual scoped segment>)`. The structured
+dependency identity is the scoped import or alias definition, and the stable
+diagnostic names the segment that source relocation would lose (`local` or
+`Local`), not merely the final member `N`. Resolution must inspect mapped HIR
+path segments in the initializer and their lexical block ancestry. For nested
+imports with the identical alias and resolved target, the exact dependency ID
+is the nearest active inner import, not the outer import encountered first. A
+same-name import in a sibling or unrelated block does not cause rejection; use
+a compiling same-target sibling case as the negative control and compare its
+complete transformed output.
+
 ### A8-DEP-09 `one_invalid_static_rejects_all_changes`
 
 Input:
@@ -1372,9 +1381,12 @@ timeouts, and all other configuration remain unchanged.
 
 Compare adapter `stage.toml` and `resolve_pass_plan({})` with their prior
 contract. Expected: no new stage config key; default `final_pass = "bin"` and
-all existing pass flags remain unchanged; `prepare` is merely an accepted pass
-name. No stage envelope/schema/version, artifact kind, `proctor.toml`, prompt,
-metric, or local-transformation protocol changes.
+all existing pass flags remain exactly unchanged: outparam uses only
+`--outparam-simplify`, io uses only `--io-assume-to-str-ok`, unsafe uses exactly
+its four established flags, and unexpand uses only `--unexpand-use-print`.
+`prepare` is merely an accepted pass name. No stage envelope/schema/version,
+artifact kind, `proctor.toml`, prompt, metric, or local-transformation protocol
+changes.
 
 ### A8-WIRE-08 `libc_is_completely_out_of_scope`
 
@@ -1521,10 +1533,10 @@ Implementation is complete only when:
 | Requirement | Cases |
 | --- | --- |
 | every non-block match arm gets one block | A8-MATCH-01--07 |
-| all agreed function-like scopes lift to the correct module | A8-LIFT-01--07 |
+| all supported function-like scopes lift, and direct async functions reject cleanly | A8-LIFT-01--07, A8-LIFT-03A |
 | every binder class and resolved prelude reservation is enforced | A8-NAME-01--12 |
 | renaming follows DefId and rewrites only bound occurrences | A8-REF-01--04 |
-| allowed dependencies work and both error layers stay distinct | A8-DEP-01--11 |
+| allowed dependencies work, scoped qualified segments reject, and both error layers stay distinct | A8-DEP-01--11, A8-DEP-08A |
 | prepare-boundary exports and later unsafe policy are exact | A8-EXPORT-01--05, A8-INT-05 |
 | CLI/serde/adapter/config wiring is exact and opt-in | A8-WIRE-01--08 |
 | idempotence and neighboring pass contracts hold | A8-INT-01--05 |

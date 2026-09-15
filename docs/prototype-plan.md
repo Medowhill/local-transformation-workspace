@@ -13,7 +13,7 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--7 and Amendments 1--7 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--8 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
@@ -25,8 +25,8 @@ historical. Material shared by several task sets is preserved in
 
 The broader [research plan](research-plan.md) and
 [component specification](proctor-spec.md) describe the intended research
-system. [unsupported.md](unsupported.md) consolidates the prototype's
-conceptual input restrictions.
+system. [unsupported.md](unsupported.md) describes the conservative input
+restrictions enforced by the downstream local-transformation components.
 
 The former end-to-end evaluation phase was not executed as planned and is not
 part of this history. Validation now follows a separate, currently
@@ -179,12 +179,13 @@ replacement do not infer provenance from source spelling.
 - [Detailed Amendment 7 plan](amendment-7-plan.md)
 - [Amendment 7 test plan](amendment-7-test-plan.md)
 
-## Amendment 8 (planned)
+## Amendment 8
 
-Amendment 8 plans an ordinary Crat `prepare` pass that block-wraps every
-non-block match arm and lifts function-local statics with compiler-resolved,
-deterministic collision renaming. Only the local pipeline selects the pass;
-adapter defaults and libc behavior remain unchanged.
+Amendment 8 added an ordinary Crat `prepare` pass that block-wraps non-block
+match arms and lifts function-local statics with compiler-resolved use rewriting
+and deterministic collision renaming. It rejects scoped dependencies, direct
+async functions, and nonstandard or disabled preludes atomically. Only the local
+pipeline selects the pass; adapter defaults and libc behavior remain unchanged.
 
 - [Detailed Amendment 8 plan](amendment-8-plan.md)
 - [Amendment 8 test plan](amendment-8-test-plan.md)

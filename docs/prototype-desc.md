@@ -101,6 +101,15 @@ SCCs remain promoted while later SCCs are processed.
 
 ## Crat preparation and tool boundary
 
+The checked-in local pipeline selects Crat's ordinary `prepare` pass after
+`enum` and before `simpl`. It wraps non-block match-arm expressions in value-
+preserving blocks and lifts function-local statics into their nearest lexical
+modules. It rewrites compiler-resolved uses to follow each lift and renames a
+static when crate-wide value binders or the destination's implicit prelude
+would collide. Preparation is atomic: unsupported input or a scoped initializer
+or type dependency produces no changed source. The CRAT adapter's default pass
+chain does not select this local-pipeline normalization.
+
 Ordinary `crat` owns the initial `expand,unexpand` preparation. Expand cleanup
 preserves explicitly declared `[[bin]].path` sources, the root `build.rs`, and
 the root `target/`; it removes obsolete Rust source files before writing the
@@ -269,9 +278,12 @@ contain exactly one tail expression, and any nested control must recursively
 have the same conditional form. Such an expression is opaque to internal
 labeling and remains part of its enclosing statement region.
 
-Generation fails atomically for unsupported shapes such as empty statements,
-function-local items, non-block match arms, invalid nested control, an AST/HIR
-mapping mismatch, or an unspellable synthesized type.
+Direct skeleton generation still fails atomically for unsupported shapes such
+as empty statements, function-local items, non-block match arms, invalid nested
+control, an AST/HIR mapping mismatch, or an unspellable synthesized type. In
+the checked-in local pipeline, the earlier ordinary preparation pass removes
+function-local statics and non-block match arms before this defensive boundary;
+other function-local items remain unsupported.
 
 ## Structural validation
 
@@ -488,13 +500,17 @@ literals retain their ordinary generalization behavior.
 
 The prototype intentionally supports a restricted Rust input model. Important
 excluded constructs include methods and traits, closures, source-written
-type/const generics, function pointers and callbacks, function-local items,
-explicit unsafe blocks outside the managed executable boundary, and pointer
-transformations that require changing named types or globals.
+type/const generics, function pointers and callbacks, remaining function-local
+items after static lifting, explicit unsafe blocks outside the managed
+executable boundary, and pointer transformations that require changing named
+types or globals. The initial Crat preparation boundary accepts async blocks
+inside otherwise supported functions but excludes direct async functions,
+disabled implicit preludes, and source-authored custom preludes.
 
-See [unsupported.md](unsupported.md) for the consolidated conceptual input
-contract. Current Crat generation, validation, and replacement checks remain
-authoritative for mechanically enforced restrictions.
+Beyond the preparation behavior above, [unsupported.md](unsupported.md)
+describes the remaining conceptual input restrictions. Current Crat generation,
+validation, and replacement checks remain authoritative for mechanically
+enforced restrictions.
 
 For historical implementation details, continue with
 [prototype-plan.md](prototype-plan.md). That overview links the detailed work

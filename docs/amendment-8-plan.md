@@ -58,6 +58,12 @@ Out of scope:
   conservative crate-wide set below; or
 - changing match patterns, guards, attributes, ordering, or control semantics.
 
+Direct `async fn` declarations are unsupported, including free, local, impl,
+and trait functions. Async blocks remain supported inside non-async function
+bodies. Crates using `#[no_implicit_prelude]` or a source-authored/custom
+`#[prelude_import]` are also unsupported. These inputs must fail through the
+structured preparation-error layer before AST/HIR mapping or rewriting.
+
 Other function-local items remain unsupported by local transformation. A local
 module also remains a local item and may still make that stage reject the
 function even though `prepare` can normalize match arms and statics in function
@@ -155,13 +161,17 @@ change.
 ### 5.1 Lexical ownership
 
 A static is function-local when its item statement is lexically owned by a
-function or method body rather than directly by a module. Handle such statics
-recursively in:
+supported non-async function or method body rather than directly by a module.
+Handle such statics recursively in:
 
 - free-function bodies;
 - provided trait-method and impl-method bodies;
 - closures and async blocks inside those bodies; and
 - nested local-function bodies.
+
+Reject a direct async free function, local function, impl method, or trait
+function before invoking the shared AST/HIR mapper. This restriction does not
+apply to an async block nested in a supported non-async body.
 
 Lift each static to the nearest lexical module containing the innermost
 function that owns it. This is the same module as the function, never its impl,
@@ -238,13 +248,17 @@ implicit-prelude ValueNS names. Considering only the crate-owned set here:
 
 ### 6.2 Fresh-enough allocation
 
-Separately compute the active implicit-prelude ValueNS names for every
-destination module that will receive a lifted static. Derive these names from
-rustc's resolved/compiler-injected prelude for that module, not from a
-hard-coded list. The result must therefore follow the crate's edition,
-`no_std`, `no_implicit_prelude` on the applicable module ancestry, and any
-compiler-recognized custom prelude. If no implicit prelude is active at a
-destination, its prelude reservation set is empty.
+Separately compute the implicit-prelude ValueNS names from rustc's normal
+compiler-injected standard prelude, not from a hard-coded list. The result must
+therefore follow the crate's edition and `no_std` selection of `std` or `core`.
+All supported destination modules use this compiler-injected prelude.
+
+Reject any AST attribute named `no_implicit_prelude`. Also reject any expanded
+AST item with a non-dummy source span and an attribute named `prelude_import`;
+this distinguishes a source-authored/custom prelude import from rustc's
+dummy-spanned injected standard-prelude item. Perform both checks before the
+shared AST/HIR mapper. The ordinary dummy-spanned compiler injection is not an
+unsupported source construct and remains the source of reservation names.
 
 Prelude names remain separate from crate-owned binder multiplicity, but they
 participate in both collision detection and allocation at the destination. A
@@ -254,14 +268,13 @@ implicit-prelude ValueNS name at its destination module. Condition (b) renames
 the static even when its own definition is the only crate-owned binder with
 that name.
 
-The same prelude set reserves every generated candidate: a candidate `name_N`
-is unavailable when that spelling is active through the destination's implicit
-prelude. An import that rustc recognizes as the active implicit prelude,
-including a compiler-recognized custom `#[prelude_import]`, belongs only to
-this separate set even when it is visible in the expanded source. An ordinary
-source-written prelude or glob `use` that rustc does not recognize as implicit
-prelude machinery is instead an ordinary crate-owned import binder under
-Section 6.1.
+The same standard-prelude set reserves every generated candidate: a candidate
+`name_N` is unavailable when that spelling is active through the implicit
+prelude. The compiler-injected `#[prelude_import]` belongs only to this
+separate set even though it is visible in the expanded source. An ordinary
+source-written glob `use` is instead a crate-owned import binder under Section
+6.1; a source-authored item marked `#[prelude_import]` is rejected as described
+above.
 
 Allocate replacements only for colliding liftable statics, in the discovery
 order from Section 5. For original semantic name `name`, try:
@@ -311,7 +324,10 @@ Local-import dependence must be recognized as a binding/scope fact, not lost
 by looking only at the imported target's final `DefId`: use HIR path-segment
 resolution plus lexical item ancestry so a path reached through a block-scoped
 named or glob import is rejected even when its ultimate definition is
-module-owned. Do not silently qualify such paths or lift a dependency closure.
+module-owned. When identical aliases to the identical target are nested, report
+the nearest lexically active binding's definition rather than an outer binding
+encountered earlier in source order. Do not silently qualify such paths or lift
+a dependency closure.
 
 The compiler has already rejected illegal captures such as a static using an
 ordinary runtime local or an outer generic parameter. The pass must still use
@@ -375,20 +391,24 @@ Structure the pass as analysis/plan construction followed by one AST rewrite.
 The analysis must finish all of the following before removing, inserting,
 renaming, or wrapping anything:
 
-1. AST/HIR mapping;
-2. local-static discovery and destination/insertion planning;
-3. crate-wide binder accounting, per-destination implicit-prelude collision
+1. expanded-AST rejection of unsupported direct async functions and prelude
+   configurations, before the shared mapper;
+2. AST/HIR mapping;
+3. local-static discovery and destination/insertion planning;
+4. crate-wide binder accounting, implicit-prelude collision
    accounting, and deterministic name allocation;
-4. type/initializer dependency validation; and
-5. declaration and bound-use mapping validation.
+5. type/initializer dependency validation; and
+6. declaration and bound-use mapping validation.
 
 Expose the pass as a result-returning operation, such as
 `preparer::prepare(tcx) -> Result<String, PrepareError>`, with stable error
-categories for at least a rejected scoped dependency and a missing/ambiguous
-compiler mapping. A scoped-dependency diagnostic must identify both the local
-static and the scoped binding on which it depends. A mapping diagnostic must
-identify the involved static or source construct. Select the first error in
-the deterministic discovery/reference order; do not let a hash map choose it.
+categories for unsupported direct async functions, unsupported prelude
+configuration, rejected scoped dependency, and missing/ambiguous compiler
+mapping. A scoped-dependency diagnostic must identify both the local static
+and the actual scoped binding or qualified path segment on which it depends. A
+mapping diagnostic must identify the involved static or source construct.
+Select the first error in deterministic source/reference order; do not let a
+hash map choose it.
 
 Add prepare-specific CLI error handling; no general existing fatal-pass
 convention provides it. Keep the two result layers distinct. First,
@@ -464,7 +484,7 @@ There is no `libc` entry in that configuration and no change to `libc` behavior.
 ## 12. Determinism, compatibility, and preserved behavior
 
 Determinism is defined by expanded-source traversal, original binder spelling,
-compiler-resolved per-destination prelude membership, ascending numeric
+compiler-resolved standard-prelude membership, ascending numeric
 suffixes, and stable insertion order. Sort only data whose compiler API does
 not promise source order; retain source spans/ordinals as the tie-break.
 Hash-based sets/maps may answer membership questions but must not choose error
@@ -491,14 +511,14 @@ be rebuilt through the adapter's existing cache/fingerprint mechanism.
 
 ## 13. Implementation sequence
 
-1. Add the in-memory pass shell, result/error surface, AST/HIR mapping, and
-   module-local test harness.
+1. Add the in-memory pass shell, result/error surface, unsupported-input
+   preflight, AST/HIR mapping, and module-local test harness.
 2. Implement and test recursive non-block match-arm wrapping independently.
 3. Implement local-static discovery, lexical module/insertion anchors, and
    deterministic extraction/insertion without renaming.
 4. Implement the exact crate-wide value-binder collector and multiplicities.
-5. Add deterministic suffix allocation, per-destination compiler-resolved
-   implicit-prelude reservations, and compiler-identity declaration/use
+5. Add deterministic suffix allocation, compiler-resolved standard-prelude
+   reservations, and compiler-identity declaration/use
    rewriting.
 6. Add scoped-dependency and complete mapping preflight so all rejection occurs
    before mutation.
@@ -562,6 +582,8 @@ The change is complete only when:
   same-spelled unrelated occurrence changes;
 - unsupported scoped dependencies and missing mappings reject atomically with
   actionable deterministic diagnostics;
+- direct async functions, `no_implicit_prelude`, and source-authored/custom
+  prelude imports reject atomically before AST/HIR mapping;
 - at the `prepare` output boundary, linked symbols follow the exact
   export-attribute matrix and non-exported statics remain non-exported, without
   changing the later `unsafe` pass's existing treatment of `no_mangle`;

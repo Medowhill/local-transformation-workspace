@@ -168,19 +168,19 @@ Records are emitted in deterministic recursive source order for:
 
 Each record has a numeric ID, item kind, and crate-relative path. Function
 records additionally contain a final name, annotated source, source and target
-signatures, direct dependencies, signature dependencies, resolved
-foreign-function names, and two complete skeleton views. The `baseline` view
-contains the ordinary analysis result. The `applied` view has the same label
-topology and signature but includes every statement that was completely fixed
-by selected rules. Each view carries its own skeleton, transformation flag,
-recursive statement-disposition forest, and statement-pair metadata for labels
-included in the diagnostic report.
+signatures, direct dependencies, signature dependencies, resolved foreign-
+function and foreign-static names, and two complete skeleton views. The
+`baseline` view contains the ordinary analysis result. The `applied` view has
+the same label topology and signature but includes every statement that was
+completely fixed by selected rules. Each view carries its own skeleton,
+transformation flag, recursive statement-disposition forest, and statement-pair
+metadata for labels included in the diagnostic report.
 
 Dependencies are compiler-resolved, direct rather than transitive, sorted,
-and deduplicated. Foreign functions do not become transformable records or
-graph dependencies. Their resolved Rust declaration names and distinct linked
-symbols for supported local C declarations are recorded only as advisory
-prompt context for the function that refers to them.
+and deduplicated. Foreign functions and statics do not become transformable
+records or graph dependencies. Their resolved Rust declaration names and
+distinct linked symbols for supported local C declarations are recorded only
+as advisory prompt context for the function that refers to them.
 
 Prompt-facing function headers omit explicit ABI syntax and `#[no_mangle]`.
 Every target function is shown as unsafe. Non-`ref` bindings are displayed as
@@ -377,7 +377,8 @@ without a rule application remains fatal.
 The prompt contains:
 
 - each member's annotated source and target skeleton, ordered by item ID;
-- resolved foreign-function names for each member when present;
+- resolved foreign-function and foreign-static names for each member when
+  present;
 - direct dependency entries;
 - every SCC member signature for a recursive SCC; and
 - a breadth-first closure through signature dependencies for value items and

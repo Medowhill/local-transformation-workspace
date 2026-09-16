@@ -189,3 +189,13 @@ pipeline selects the pass; adapter defaults and libc behavior remain unchanged.
 
 - [Detailed Amendment 8 plan](amendment-8-plan.md)
 - [Amendment 8 test plan](amendment-8-test-plan.md)
+
+## Amendment 9
+
+Amendment 9 adopted `proctor-libc` 0.3.0, broadened exact static `printf`
+lowering with wrapper-aware SCC prompt guidance, and added mutable `strto*`
+guidance. It also extended Crat `prepare` to replace common ctype calls and
+glibc table idioms symbolically, adding the dependency only when required.
+
+- [Detailed Amendment 9 plan](amendment-9-plan.md)
+- [Amendment 9 test plan](amendment-9-test-plan.md)

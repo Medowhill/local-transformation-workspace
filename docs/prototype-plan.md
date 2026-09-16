@@ -13,7 +13,7 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--7 and Amendments 1--8 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--9 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
@@ -193,9 +193,10 @@ pipeline selects the pass; adapter defaults and libc behavior remain unchanged.
 ## Amendment 9
 
 Amendment 9 adopted `proctor-libc` 0.3.0, broadened exact static `printf`
-lowering with wrapper-aware SCC prompt guidance, and added mutable `strto*`
-guidance. It also extended Crat `prepare` to replace common ctype calls and
-glibc table idioms symbolically, adding the dependency only when required.
+lowering, and added exact per-function metadata with SCC guidance that omits
+signed-wrapper advice only for uniformly native-safe signed formats. It added
+mutable `strto*` guidance, direct/table ctype preparation, and conditional
+generic dependency publication.
 
 - [Detailed Amendment 9 plan](amendment-9-plan.md)
 - [Amendment 9 test plan](amendment-9-test-plan.md)

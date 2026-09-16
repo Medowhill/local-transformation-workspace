@@ -56,7 +56,8 @@ Rust tests belong beside their implementation:
   `item_replacer.rs`;
 - observations and rules: `crates/tools/src/observation.rs` and `rule.rs`;
 - ctype preparation: `crates/passes/src/preparer/tests.rs`;
-- pure `Pass::Prepare` result/dependency wiring: `src/bin/crat.rs`.
+- pure dependency normalization: `crates/utils/src/dependency.rs`;
+- pure preparation publication ordering: `crates/passes/src/preparer/tests.rs`.
 
 Crat tests call library APIs and in-memory compiler harnesses. They must not
 invoke `crat-tool` or `crat`, mutate a project tree, or use a Crat-root
@@ -75,7 +76,7 @@ cargo test -p tools observation::tests
 cargo test -p tools rule::tests
 cargo test -p tools
 cargo test -p passes preparer::tests
-cargo test --bin crat
+cargo test -p utils dependency::tests
 cargo test -p passes
 cargo test --workspace
 cargo fmt
@@ -175,9 +176,9 @@ only that terminal cast and passes `e` unchanged. It adds no cast and performs
 no type analysis. A table form whose `.offset` argument has no terminal
 `as isize` cast is a nonmatch.
 
-`ensure_proctor_libc_dependency` returns a simple CLI-local `Result`. A
-dependency failure adds no error enum and uses no `panic!`, `unwrap`, or
-`expect`; it terminates the CLI before source write with this stable diagnostic
+The generic utils dependency seam and preparation publication API return
+ordinary `Result` values. A dependency failure uses no `panic!`, `unwrap`, or
+`expect`; publication stops before source write with this stable diagnostic
 prefix after substituting the displayed manifest path and underlying cause:
 
 ```text
@@ -291,9 +292,9 @@ A9-DEP-12 supplies each malformed manifest independently:
 Each local-stage case fails with exact fake events `["build_tools"]`, before
 project preparation, skeleton generation, project build, or LLM use, and
 preserves the input manifest. A9-PREP-02A reuses these four input fragments for
-the new Crat CLI helper. For manifest path `/work/project/Cargo.toml`, every
-helper failure uses this exact template, substituting the corresponding
-underlying cause, and occurs before source write:
+the pure utils normalization seam. When preparation publication supplies
+manifest path `/work/project/Cargo.toml`, every failure uses this exact template,
+substituting the corresponding underlying cause, and occurs before source write:
 
 ```text
 failed to ensure proctor-libc dependency in /work/project/Cargo.toml: <cause>
@@ -530,14 +531,18 @@ old-compatible default.
 
 ### A9-SKEL-05 `view_and_report_invariants_do_not_change`
 
-Use a fixed function with label 0 `%#x`, label 1 `%10.3s`, and label 2
-`printf("done")`, and provide a rule that covers only label 0. Expected baseline
-dispositions are `transform, transform, mechanical`; applied dispositions are
-`rule_applied, transform, mechanical`; report metadata labels are `[0,1,2]` in
-both views; label 2's metadata is identical across views; and the function
-summary is `["%#x", "%10.3s"]`. A nested `if` around label 1 remains one
-`preserve_shell` parent with the same child label in both views. Existing
-pointer-variable fields on label 1 remain byte-identical.
+Use a fixed function whose first top-level statement is `%#x`, whose second
+top-level statement is an `if` containing `%10.3s`, and whose third top-level
+statement is `printf("done")`; provide a rule that covers only `%#x`. Annotation
+labels are 0 for `%#x`, 1 for the preserved `if` shell, 2 for the nested
+`%10.3s`, and 3 for `printf("done")`. Expected baseline top-level dispositions
+are `transform, preserve_shell, mechanical`; applied top-level dispositions are
+`rule_applied, preserve_shell, mechanical`; the shell's child remains
+`transform` in both views. Report metadata labels are `[0,2,3]` in the baseline
+view and `[2,3]` in the applied view. Metadata for labels 2 and 3 is
+byte-identical across views, including label 2's existing pointer-variable
+fields. `preserve_shell` label 1 and `rule_applied` label 0 are intentionally not
+report pairs. The function summary is `["%#x", "%10.3s"]`.
 
 ## 9. Validation and replacement defenses
 
@@ -797,29 +802,37 @@ printf rule. `%#08.4x` never pairs with `%#8.4x`, `%#08.5x`, `%#08.4X`, `%x`,
 or `%08.4x`. Repeat for `% d` versus `%d`, `%E` versus `%e`, `%Lg` versus
 `%g`, and `%10.3s` versus `%.3s`.
 
-### A9-SYN-02 `wrapper_bearing_targets_generalize`
+### A9-SYN-02 `wrapper_bearing_targets_preserve_identity_carriers`
 
-For each exact pair below, create observations differing only in binding names
-`left` and `right`, then synthesize:
+For each scalar pair below, create anchorless observations differing only in
+the local binding names `left` and `right`, then synthesize. For `%10.3s`, use
+pointer-linked observations whose local bindings are the carriers of matching
+raw-pointer-to-shared-slice anchors.
 
 | Specifier | Target roots in the two observations | Exact rigid rule target |
 | --- | --- | --- |
-| `%d` | `signed(left)`, `signed(right)` | `signed(<expr0>)` |
-| `%#08.4x` | `unsigned(left)`, `unsigned(right)` | `unsigned(<expr0>)` |
-| `%f` | `fixed(left)`, `fixed(right)` | `fixed(<expr0>)` |
-| `%F` | `fixed_upper(left)`, `fixed_upper(right)` | `fixed_upper(<expr0>)` |
-| `%E` | `scientific(left)`, `scientific(right)` | `scientific(<expr0>)` |
-| `%g` | `general(left)`, `general(right)` | `general(<expr0>)` |
-| `%G` | `general_upper(left)`, `general_upper(right)` | `general_upper(<expr0>)` |
-| `%A` | `hex_float(left)`, `hex_float(right)` | `hex_float(<expr0>)` |
-| `%10.3s` | `byte_string(left)`, `byte_string(right)` | `byte_string(<expr0>)` |
-| `% d` | `signed(left).space_sign()`, `signed(right).space_sign()` | `signed(<expr0>).space_sign()` |
+| `%d` | `signed(left)`, `signed(right)` | `signed(<binding0>)` |
+| `%#08.4x` | `unsigned(left)`, `unsigned(right)` | `unsigned(<binding0>)` |
+| `%f` | `fixed(left)`, `fixed(right)` | `fixed(<binding0>)` |
+| `%F` | `fixed_upper(left)`, `fixed_upper(right)` | `fixed_upper(<binding0>)` |
+| `%E` | `scientific(left)`, `scientific(right)` | `scientific(<binding0>)` |
+| `%g` | `general(left)`, `general(right)` | `general(<binding0>)` |
+| `%G` | `general_upper(left)`, `general_upper(right)` | `general_upper(<binding0>)` |
+| `%A` | `hex_float(left)`, `hex_float(right)` | `hex_float(<binding0>)` |
+| `%10.3s` | `byte_string(left)`, `byte_string(right)` | `byte_string(<anchor0>)` |
+| `% d` | `signed(left).space_sign()`, `signed(right).space_sign()` | `signed(<binding0>).space_sign()` |
 
 All paths are fully qualified in actual expressions. Expected one rule per
 row, with the listed exact specifier and rigid call/method structure. A single
 observation yields zero rules. Pairing `signed(left)` with `unsigned(right)` at
-the same fabricated specifier yields zero rules. `<expr0>` above denotes the
-exact JSON pattern `{"kind":"variable","sort":"expression","index":0}`.
+the same fabricated specifier yields zero rules. `<binding0>` above denotes the
+exact JSON expression
+`{"kind":"path","value":{"kind":"variable","sort":"binding","index":0}}`.
+`<anchor0>` denotes the exact JSON expression
+`{"kind":"path","value":{"kind":"variable","sort":"anchor","index":0}}`;
+its corresponding rule pointer-anchor entry uses the same anchor variable with
+source type `*const i8` and target type `&[i8]`. These identity-aware path
+carriers do not authorize arbitrary-expression generalization.
 
 ### A9-APPLY-01 `rules_materialize_and_compile`
 
@@ -842,9 +855,9 @@ The first is attached to an otherwise valid `%d` rule and the second to an
 otherwise valid `%s` rule. In each case rule-document validation succeeds,
 selection/materialization produces a `rule_applied` print statement, and
 structural candidate validation succeeds because the trusted format and slot
-count are unchanged. Cargo compilation then fails: `[i32; 2]` does not
-implement `SignedValue`, while `byte_string` requires `&[i8]` rather than
-`i32`. The candidate is rolled back and the existing whole-SCC baseline
+count are unchanged. Cargo compilation then fails: `[i32; 2]` is not an
+accepted `signed` input, while `byte_string` requires `&[i8]` rather than `i32`.
+The candidate is rolled back and the existing whole-SCC baseline
 fallback runs once. Do not add target root-type inference or wrapper
 enforcement to make either case fail earlier.
 
@@ -885,8 +898,11 @@ numeric bounds, and canonical fields.
 ### A9-PY-GUIDE-01 `one_family_does_not_explain_another`
 
 Render guidance separately for each metadata array in A9-PY-WIRE-02. The
-output contains the exact fully qualified selected path once and contains none
-of this fixed forbidden set after removing the selected member:
+signed classifier input `['%d','%lli']` produces nonempty generic invariants
+but no signed call, signed accepted-input list, or integer-only `i128`/`u128`
+warning because every signed member is proven native-safe. Each other output
+contains the exact fully qualified selected call expression once and contains
+none of this fixed forbidden set after removing the selected member:
 
 ```text
 proctor_libc::printf::signed
@@ -901,9 +917,33 @@ proctor_libc::printf::byte_string
 ```
 
 No rendered line begins with `use ` or `fn `. Inputs
-`["%d","%i","%lld"]`, `["%X","%o","%u","%x"]`, and
+`["%.0d","% d"]`, `["%X","%o","%u","%x"]`, and
 `["%E","%Le","%e"]` each produce one family entry, not one entry per
-specifier.
+specifier. Each adapter rendering includes exactly its relevant accepted-input
+group: signed `i8`/`i16`/`i32`/`i64`/`isize`, unsigned
+`u8`/`u16`/`u32`/`u64`/`usize`, floating `f32`/`f64`/`f128::f128`, or byte
+string `&[i8]`; unrelated groups are absent.
+
+### A9-PY-GUIDE-01A `native_signed_proof_is_universal_and_fail_closed`
+
+Each of `%d`, `%i`, `%hhd`, `%hd`, `%ld`, `%lld`, `%jd`, `%zd`, `%td`,
+`%8d`, `%-8d`, `%+8d`, `%08d`, and valid repetitions/permutations of `-`,
+`+`, and `0` renders nonempty trusted-format, slot-order, and C-length generic
+guidance without the signed call, signed type set, adapter introduction, or
+integer-only `i128`/`u128` warning. Each of `%.d`, `%.0d`, `%.5d`, `%08.5d`,
+`%-08.5i`, `% d`, `%+ d`, `%*d`, `%d%d`, and `%bogusd` retains the signed
+call and type set. The retained text says to use
+`proctor_libc::printf::signed(value)` for integer precision or space-sign
+behavior, to pass ordinary signed conversions as their correctly converted
+values, and to retain the adapter conservatively when native safety is not
+proven.
+
+For `['%d','%E']`, scientific guidance remains but signed-specific guidance is
+absent. For `['%d','%.0d']`, signed guidance appears once with the narrow
+wording above. Two safe signed SCC members omit signed guidance regardless of
+member order; adding one exceptional signed member forces retention regardless
+of order. An exceptional signed dependency outside the current SCC does not
+force retention.
 
 ### A9-PY-GUIDE-02 `space_sign_is_selected_from_flags`
 
@@ -919,36 +959,43 @@ unsigned and string guidance never mentions the method.
 
 With all nine families selected, assert the guidance contains these exact
 behavioral fragments once: `fully qualified`, `after the C length conversion`,
-`do not define or import`, `Rust's e/E formatting trait`,
-`Rust's x/X formatting trait`, `f128::f128`, `&[i8]`, `first NUL`,
-`counts bytes`, and `valid UTF-8`. It contains each corresponding public
-signature:
+`do not define or import`, `let Rust infer their return types`,
+`Rust's e/E formatting trait`, `Rust's x/X formatting trait`, the exact signed,
+unsigned, floating, and byte-string input sets, `first NUL`, `counts bytes`,
+and `valid UTF-8`. It contains each corresponding directly usable call
+expression:
 
 ```rust
-pub fn signed<T: SignedValue>(value: T) -> Signed<T>;
-pub fn unsigned<T: UnsignedValue>(value: T) -> Unsigned<T>;
-pub fn fixed<T: FixedValue>(value: T) -> Fixed<T>;
-pub fn fixed_upper<T: FixedValue>(value: T) -> FixedUpper<T>;
-pub fn scientific<T: FixedValue>(value: T) -> Scientific<T>;
-pub fn general<T: FixedValue>(value: T) -> General<T>;
-pub fn general_upper<T: FixedValue>(value: T) -> GeneralUpper<T>;
-pub fn hex_float<T: FixedValue>(value: T) -> HexFloat<T>;
-pub fn byte_string(value: &[i8]) -> ByteString<'_>;
+proctor_libc::printf::signed(value)
+proctor_libc::printf::unsigned(value)
+proctor_libc::printf::fixed(value)
+proctor_libc::printf::fixed_upper(value)
+proctor_libc::printf::scientific(value)
+proctor_libc::printf::general(value)
+proctor_libc::printf::general_upper(value)
+proctor_libc::printf::hex_float(value)
+proctor_libc::printf::byte_string(value)
 ```
 
-For metadata `["% d"]`, it also contains
-`pub fn space_sign(self) -> Self;` and `+ takes precedence`. For metadata
-`["%d"]`, both fragments are absent. Assert the prompt does not contain the
-module-level prose beginning `Formatting adapters for C printf semantics`.
+It contains none of the internal trait or return-type names `SignedValue`,
+`UnsignedValue`, `FixedValue`, `Signed<T>`, `Unsigned<T>`, `Fixed<T>`,
+`FixedUpper<T>`, `Scientific<T>`, `General<T>`, `GeneralUpper<T>`,
+`HexFloat<T>`, or `ByteString<'_>`, and explicitly rejects casts to unsupported
+`i128`/`u128`. For metadata `["% d"]`, it shows
+`proctor_libc::printf::signed(value)`, explicitly says to chain `.space_sign()`
+directly on that call result, and says `+ takes precedence`. For metadata
+`["%d"]`, both `.space_sign()` fragments and all signed-specific text are
+absent, but the generic invariants remain. Assert the prompt does not contain
+the module-level prose beginning `Formatting adapters for C printf semantics`.
 Every nonempty format-guidance rendering contains the exact A9-VAL-03 advisory
 sentence once.
 
 ### A9-PY-SCC-01 `only_current_members_contribute`
 
 Function 0 depends on nonmember function 1. Function 0 has `['%d']`; function
-1 has `['%E']`. Rendering SCC `(0,)` mentions only `signed`, while rendering
-`(1,)` mentions only `scientific`. Dependency context does not activate
-format guidance.
+1 has `['%E']`. Rendering SCC `(0,)` contains only generic printf invariants
+and no adapter call, while rendering `(1,)` mentions only `scientific`.
+Dependency context does not activate format guidance.
 
 ### A9-PY-SCC-02 `member_union_is_stable`
 
@@ -968,13 +1015,13 @@ as stable behavior.
 
 ### A9-PY-SCC-04 `repair_and_fallback_keep_complete_guidance`
 
-Start with an applied view containing a rule-applied `%#x` call and an LLM `%E`
-call. Render the initial request, a validation repair, a Cargo-diagnostic
-repair, then force rule-involved build failure and switch the whole SCC to
-baseline. Every emitted request has the same complete member-level unsigned
-and scientific guidance, prompt id/version `local_transformation`/`1`, current
-failure context only, and no unrelated wrappers. No request returns to the
-applied view after fallback.
+Start with an applied view containing rule-applied `%#x` and native-safe `%d`
+calls and an LLM `%E` call. Render the initial request, a validation repair, a
+Cargo-diagnostic repair, then force rule-involved build failure and switch the
+whole SCC to baseline. Every emitted request has the same complete
+member-level unsigned and scientific guidance, omits signed-specific guidance,
+uses prompt id/version `local_transformation`/`1`, and has current failure
+context only. No request returns to the applied view after fallback.
 
 ### A9-PY-PROMPT-01 `version_one_template_has_the_new_slot`
 
@@ -987,7 +1034,7 @@ The exact version-1 frontmatter variable array is:
 ```
 
 Rendering with `printf_guidance=""` contains none of the nine wrapper paths in
-A9-PY-GUIDE-01. Rendering with the exact signed guidance contains
+A9-PY-GUIDE-01. Rendering with exceptional signed guidance contains
 `proctor_libc::printf::signed` once. Existing text `Return exactly one Rust
 code block delimited by triple-backtick fences.` remains present in both.
 Request metadata records the new content hash but exact id/version
@@ -1289,57 +1336,58 @@ Pure `preparer` tests assert:
 - ctype near misses only: `false`; and
 - any `PrepareError`: no successful result or dependency signal.
 
-### A9-PREP-02 `cli_requests_dependency_only_after_success`
+### A9-PREP-02 `publication_requests_dependency_only_after_success`
 
-Refactor the existing pure `apply_prepare_result` test seam, without invoking
-the CLI or filesystem, to capture writes and dependency requests. A successful
-result with flag false writes once and requests none; flag true writes once and
-requests canonical crates.io `proctor-libc` minimum 0.3.0 exactly once. An
-inner `PrepareError`, outer compiler error, or failed dependency operation
-writes no transformed source. Preparation and compiler errors retain their
-existing distinct channels. `ensure_proctor_libc_dependency` returns a
-CLI-local `Result<(), String>`; neither `PrepareRunError` nor `PrepareError`
-gains a variant. With manifest path `/work/project/Cargo.toml` and injected
-cause `Cargo [dependencies] must be a table`, the exact CLI diagnostic is:
+Exercise `PreparationResult` publication through its module-private pure
+callback seam, without invoking a binary or filesystem, to capture writes and
+dependency requests. A successful result with flag false writes once and
+requests none; flag true writes once and requests canonical crates.io
+`proctor-libc` minimum 0.3.0 exactly once. A failed dependency operation writes
+no transformed source. A later source-write failure is returned after the
+dependency request. Established `PrepareError` cases remain covered at the
+preparer library seam and produce no `PreparationResult` or dependency signal.
+With manifest path `/work/project/Cargo.toml` and injected cause
+`Cargo [dependencies] must be a table`, the exact publication diagnostic is:
 
 ```text
 failed to ensure proctor-libc dependency in /work/project/Cargo.toml: Cargo [dependencies] must be a table
 ```
 
-The CLI terminates unsuccessfully before invoking the source-write callback.
+Publication returns unsuccessfully before invoking the source-write operation.
 The dependency-ensure path contains no `panic!`, `unwrap`, or `expect`.
 
-The CLI owns a new preservation-aware helper named
-`ensure_proctor_libc_dependency`; `Pass::Prepare` calls it only after a
-successful preparation result requests proctor-libc. The helper implements the
-manifest policy in A9-DEP-01--08 and A9-DEP-12. It does not call the existing
-unconditional `utils::add_dependency`, and the pass library does not hand-edit
-Cargo text.
+`utils::dependency::ensure_crates_io_dependency` and its pure normalization
+function implement the generic preservation-aware manifest policy used here.
+`PreparationResult::publish` calls that utils API only when successful
+preparation requests proctor-libc, then writes the source. The binary contains
+only thin pass dispatch and has no tests or test-only helpers. The generic utils
+API does not call the existing unconditional `utils::add_dependency`, and the
+pass library does not hand-edit Cargo text.
 
 ### A9-PREP-02A `target_manifest_policy_matches_the_stage`
 
-Exercise `ensure_proctor_libc_dependency` with the same manifest values as
-A9-DEP-01--08 and A9-DEP-12. Expected absent/lower crates.io requirements
+Exercise the module-private pure normalization seam behind
+`utils::dependency::ensure_crates_io_dependency` with the same manifest values
+as A9-DEP-01--08 and A9-DEP-12. Expected
+absent/lower crates.io requirements
 become 0.3.0; features and default-feature fields survive table upgrades;
 sufficient requirements and canonical path/git/workspace/alternate-registry
 entries are preserved. Aliases, canonical-name collisions, and all four exact
-A9-DEP-12 malformed inputs return `Err` without source output. After the CLI
-adds context, each diagnostic starts with
+A9-DEP-12 malformed inputs return `Err` without source output. After
+`PreparationResult::publish` adds context, each diagnostic starts with
 `failed to ensure proctor-libc dependency in /work/project/Cargo.toml: ` and
 ends with its specific cause; no `unwrap`, `expect`, or panic occurs. Other
 dependencies and package/lib tables remain identical. A no-ctype-rewrite
 result makes no dependency-planner call and performs no manifest rewrite.
-Existing CLI setup may already have parsed the manifest; this test does not
-forbid that parse.
 
 ### A9-PREP-02B `dependency_success_precedes_source_write`
 
-Use injected pure callbacks in `src/bin/crat.rs`, not a filesystem/CLI test.
-For a ctype result, dependency planning/commit occurs before the transformed
-source write. A dependency failure produces no source write. A later source
-write failure is fatal but may leave the now-valid, harmless dependency; this
-amendment does not require a custom two-file rollback protocol. A no-rewrite
-result writes the prepared source through the existing path and performs no
+Use the module-private pure callback seam behind `PreparationResult::publish`,
+not a filesystem or binary test. For a ctype result, dependency planning/commit
+occurs before the transformed source write. A dependency failure produces no
+source write. A later source-write failure is fatal but may leave the now-valid,
+harmless dependency; this amendment does not require a custom two-file rollback
+protocol. A no-rewrite result writes the prepared source and performs no
 dependency action.
 
 ### A9-PREP-03 `preparation_result_is_atomic`
@@ -1488,7 +1536,7 @@ Implementation is complete only when:
 | unsupported printf remains atomic and total | A9-FMT-N01--17, A9-ELIG-02--03 |
 | trusted templates and function-level metadata are exact | A9-SKEL-01--05, A9-VAL-01--03, A9-REP-01--02 |
 | observations and version-1 rules cover every wrapper family | A9-OBS-01--03, A9-WIRE-01, A9-SYN-01--02, A9-APPLY-01--02 |
-| Python selects complete but concise SCC guidance | A9-PY-WIRE-01--02, A9-PY-GUIDE-01--03, A9-PY-SCC-01--04, A9-PY-PROMPT-01 |
+| Python selects complete but concise SCC guidance | A9-PY-WIRE-01--02, A9-PY-GUIDE-01--03 (including 01A), A9-PY-SCC-01--04, A9-PY-PROMPT-01 |
 | all five strto families explain mutable borrowing | A9-UPD-05, A9-STRTO-01--02 |
 | direct and table ctype forms follow the approved common syntax | A9-CTYPE-D01--04, A9-CTYPE-M01--04 |
 | prepare-result atomicity, dependency ordering, idempotence, and pass interactions hold | A9-UPD-06, A9-PREP-01--06 |

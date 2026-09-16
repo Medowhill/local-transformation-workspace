@@ -65,9 +65,9 @@ The following decisions are fixed for this amendment:
 - direct ctype rewrites preserve their argument unchanged; table rewrites
   require terminal `e as isize`, remove exactly that cast, preserve `e`
   unchanged, and add neither a cast nor type analysis; and
-- target-manifest dependency failures use one contextual CLI-local `Result`
-  path before source output, without extending `PrepareRunError` or
-  `PrepareError`.
+- target-manifest dependency failures use the generic utils dependency API and
+  one contextual preparation-publication `Result` path before source output,
+  without extending `PrepareError`.
 
 The semantic boundary assumes the C locale, inputs on which the C ctype APIs
 are defined (`EOF` or an `unsigned char` value), and the accepted
@@ -200,11 +200,12 @@ Keep responsibilities on these existing boundaries:
 - `proctor/stages/crat/crates/passes/src/preparer.rs` owns syntax-directed ctype
   recognition and rewriting and reports whether generated code requires
   `proctor-libc`;
-- `proctor/stages/crat/src/bin/crat.rs` owns project source/dependency commit
-  behavior for ordinary passes;
-- `proctor/stages/crat/crates/utils/src/lib.rs` may own a reusable
-  dependency-ensuring helper if the CLI cannot keep the logic local without
-  duplication; and
+- `proctor/stages/crat/crates/passes/src/preparer.rs` owns ordered publication
+  of its successful result;
+- `proctor/stages/crat/crates/utils/src/dependency.rs` owns generic,
+  preservation-aware crates.io dependency normalization and commit behavior;
+- `proctor/stages/crat/src/bin/crat.rs` remains a thin pass dispatcher with no
+  binary-local policy or tests; and
 - `proctor/stages/crat/deps_crate/{Cargo.toml,Cargo.lock}` owns the pinned build
   dependency that lets rustc-private compiler invocations resolve generated
   `proctor_libc` paths.
@@ -263,13 +264,14 @@ table-based ctype rewrite introduces a `proctor_libc::...` path. Match-arm
 wrapping and local-static lifting alone must leave it false. An unrecognized
 ctype near-match also leaves it false.
 
-When the flag is true, the Crat CLI must ensure a canonical target-project
-dependency with minimum crates.io version 0.3.0. Its behavior should match the
-stage policy above for absent, string, table, alias, and non-registry cases so
-running `prepare` directly does not destroy existing dependency configuration.
-Implement this preservation-aware, CLI-owned seam as
-`ensure_proctor_libc_dependency`. It must not call the current unconditional
-`utils::add_dependency`, which can replace an existing table wholesale.
+When the flag is true, preparation publication must ensure a canonical
+target-project dependency with minimum crates.io version 0.3.0. Its behavior
+should match the stage policy above for absent, string, table, alias, and
+non-registry cases so running `prepare` directly does not destroy existing
+dependency configuration. Implement the preservation-aware policy as the
+generic utils seam `ensure_crates_io_dependency`, backed by a pure normalization
+function. It must not call the current unconditional `utils::add_dependency`,
+which can replace an existing table wholesale.
 
 Complete preparation before changing either file. Preserve the current
 no-source-write guarantee for `PrepareError`. When the result requires the
@@ -279,10 +281,11 @@ crate. A no-rewrite result must not touch the manifest. Do not build a custom
 two-file rollback protocol: if the later source write fails, the command fails
 and may leave only a harmless extra dependency.
 
-Have `ensure_proctor_libc_dependency` return a CLI-local `Result` covering its
-manifest read, parse, validation, and write failures. Handle that result in the
-`Pass::Prepare` CLI branch before invoking the source-write callback. Do not add
-a `PrepareRunError` or `PrepareError` variant, and do not use `panic!`,
+Have the generic utils dependency API return a `Result` covering manifest read,
+parse, validation, and write failures. `PreparationResult::publish` adds the
+target manifest context, completes that dependency operation before source
+write, and returns a publication error without extending `PrepareError`. The
+binary only dispatches the successful result to this API. Do not use `panic!`,
 `unwrap`, or `expect` anywhere on this dependency-ensure path. Report failure
 with this stable diagnostic prefix, substituting the displayed target manifest
 path and the specific cause:
@@ -480,6 +483,17 @@ deduplicate guidance in a fixed catalog order. This calculation is independent
 of member order and does not change graph edges, dependency context, target
 rendering, view fallback, or repair budgets.
 
+After minimal classification, omit the signed adapter family only when every
+signed specifier in the SCC full-matches the ASCII proof language
+`%[-+0]*[0-9]*(?:hh|h|ll|l|j|z|t)?[di]`. These forms need no signed adapter
+after the existing C length conversion: Rust's native integer formatting
+already covers ordinary `d`/`i`, supported lengths, static width, alignment,
+plus, and zero padding. Any precision, space flag, malformed/synthetic form,
+or unknown future syntax fails closed and retains signed guidance. One proven
+safe signed specifier does not suppress guidance required by another signed
+specifier in the SCC. This conservative prompt filter does not change the
+wire classifier or duplicate Crat's accepted C format grammar.
+
 Thread the same SCC guidance through every prompt-rendering path: the initial
 request, validation/build repair requests, and the whole-SCC baseline fallback.
 Because metadata describes baseline functions rather than views, the union is
@@ -489,12 +503,15 @@ unchanged across fallback; do not infer formats from mutable rendered code.
 
 Add the `printf_guidance` prompt variable to `PromptRenderInput`,
 `render_prompt`, and the version-1 template. Render no formatting section when
-the SCC has no selected adapter family. Otherwise state concisely that:
+the SCC has no printf specifiers. Otherwise always state the trusted-format,
+slot-order, and C-length-conversion invariants. Add adapter-specific calls,
+types, and their introduction only when at least one adapter family remains
+selected. State concisely that:
 
 - the target skeleton's Rust format string, static width, precision, trait
   choice, and number of argument slots are trusted and must not change;
-- each consuming value should use the listed fully qualified
-  `proctor_libc::printf` adapter for its source conversion;
+- each consuming value that needs an adapter should use the listed fully
+  qualified `proctor_libc::printf` call for its source conversion;
 - preserve the source order of consuming values: fill the existing argument
   slots in order and do not swap slots;
 - no item should be imported or defined for these calls;
@@ -506,10 +523,11 @@ the SCC has no selected adapter family. Otherwise state concisely that:
   counts width and precision in bytes, and requires the selected bytes to be
   valid UTF-8.
 
-Include only the signatures and conversion mapping for adapter families used
-by that SCC:
+Include only the fully qualified call expression, conversion mapping, and
+relevant accepted-input group for adapter families used by that SCC:
 
-- `signed` for `d`/`i`;
+- `signed` for `d`/`i` only when at least one signed specifier is not proven
+  native-safe by Section 8.2;
 - `unsigned` for `u`/`o`/`x`/`X`;
 - `fixed` and `fixed_upper` independently for `f` and `F`;
 - `scientific` once for either `e` or `E`, with the target field selecting the
@@ -518,6 +536,25 @@ by that SCC:
 - `hex_float` once for either `a` or `A`, with the target field selecting the
   Rust `x`/`X` trait; and
 - `byte_string` for `s`.
+
+Render calls in directly usable form such as
+`proctor_libc::printf::signed(value)` and let Rust infer their return types. Do
+not expose, import, define, or ask the LLM to name the adapters' internal sealed
+traits or return wrapper types. State the exact accepted inputs once per
+selected group: signed adapters accept `i8`, `i16`, `i32`, `i64`, and `isize`;
+unsigned adapters accept `u8`, `u16`, `u32`, `u64`, and `usize`; every selected
+floating adapter accepts `f32`, `f64`, and `f128::f128`; and `byte_string`
+accepts `&[i8]`. Do not suggest unsupported `i128` or `u128` casts. When the
+space flag applies, show `.space_sign()` chained directly on the selected call
+result.
+
+When signed guidance remains, say precisely to use
+`proctor_libc::printf::signed(value)` for signed conversions with integer
+precision or space-sign behavior and to pass ordinary signed conversions as
+their correctly converted values. Retain the adapter conservatively for any
+signed specifier outside the proof language. A native-signed-only SCC still
+receives the generic invariants but no signed call, signed accepted-input list,
+integer-only `i128`/`u128` warning, or claim that adapter calls/types follow.
 
 Mention `.space_sign()` only if at least one selected signed/floating specifier
 contains the space flag. The C `+` flag overrides a simultaneous space flag;
@@ -700,10 +737,10 @@ The following behavior is required:
 - ctype candidates are selected by the approved narrow textual names and
   common AST shapes; unrecognized near-matches remain unchanged for local LLM
   work;
-- `PrepareError` precedes source and manifest changes, and a CLI-local
-  dependency-ensure error uses the required contextual diagnostic and prevents
-  the generated source write. The source/manifest pair is not promised to be
-  transactionally atomic;
+- `PrepareError` precedes source and manifest changes, and a contextual
+  publication error from the generic dependency seam prevents the generated
+  source write. The source/manifest pair is not promised to be transactionally
+  atomic;
 - no dependency is added by `prepare` unless generated source actually
   references `proctor_libc`; and
 - all existing source ordering, local-static placement/renaming, match-arm
@@ -782,10 +819,11 @@ Do not include any of the following:
    the required terminal `e as isize`, unchanged reuse of `e`, rejection when
    that cast is absent, representative outer use contexts, 0/1 normalization,
    exact-name mapping, structural rejection, and idempotence.
-9. Add target-manifest minimum-version handling to the Crat CLI. Ensure the
-   dependency after successful preparation and before source output; test its
-   focused helper, stable contextual diagnostic, and no-source-write failure
-   behavior without making Crat library tests mutate a project tree.
+9. Add generic target-manifest minimum-version handling to utils and ordered
+   publication to the preparer library. Ensure the dependency after successful
+   preparation and before source output; test the pure normalization and
+   callback ordering seams, stable contextual diagnostic, and no-source-write
+   failure behavior without testing a binary or mutating a project tree.
 10. Run focused and full verification, validate the unchanged local pipeline
    configuration, then update the current prototype description and concise
    historical overview through their required documentation workflows.
@@ -804,10 +842,11 @@ cargo test -p tools rule::tests
 cargo test -p tools
 ```
 
-Run preparation and CLI-focused tests, then the cross-workspace checks:
+Run preparation and dependency-library tests, then the cross-workspace checks:
 
 ```bash
 cargo test -p passes preparer::tests
+cargo test -p utils dependency::tests
 cargo test -p passes
 cargo test --workspace
 cargo fmt
@@ -856,9 +895,10 @@ The amendment is complete only when:
   exact, deterministically ordered `printf_format_specifiers` array, and Python
   rejects malformed array shape, ordering, member types, or unsupported
   classifier inputs;
-- each prompted SCC receives all and only the adapter families implied by its
-  function records, plus space-sign guidance only when needed, without a
-  prompt-version bump;
+- each prompted SCC receives generic printf invariants when it has format
+  metadata, all and only the adapter families still required after the
+  conservative native-signed proof, and space-sign guidance only when needed,
+  without a prompt-version bump;
 - all five `strto*` entries accurately expose both shared and mutable suffix
   APIs;
 - direct and canonical table-based ctype idioms rewrite to the exact fully
@@ -870,9 +910,9 @@ The amendment is complete only when:
 - direct ctype arguments remain unchanged, while table rewrites require and
   remove exactly one terminal `as isize`, reuse its operand unchanged, and add
   no cast or type analysis;
-- dependency-ensure failures use the CLI-local contextual `Result` path and
-  stable diagnostic without a new preparation/run error variant, panic,
-  unwrap, or generated source write;
+- dependency-ensure failures use the generic utils plus contextual publication
+  `Result` path and stable diagnostic without extending `PrepareError`, panicking,
+  unwrapping, or writing generated source;
 - no public schema, stage contract, artifact, config, or nonlocal prototype
   behavior changes; and
 - every case in the companion test plan, all focused/full checks, formatting,

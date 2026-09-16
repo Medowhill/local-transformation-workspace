@@ -11,10 +11,9 @@ they disagree with this description. The broader [research plan](research-plan.m
 and [component specification](proctor-spec.md) describe the intended research
 system, including behavior that this prototype does not implement.
 
-The [historical prototype plan](prototype-plan.md) explains how the
-implementation was built and later amended. Read it for rationale and task
-provenance, then follow its links to a detailed plan only when that history is
-relevant.
+The [historical prototype plan](prototype-plan.md) records implementation
+history and rationale. Follow its links to a detailed plan only when that
+history is relevant.
 
 The main implementation surfaces are:
 
@@ -72,10 +71,16 @@ For one stage invocation, the implementation:
 2. builds or reuses release `crat` and `crat-tool` binaries;
 3. copies the complete input project to `work/current` and ensures crates.io
    dependencies on `bytemuck`, `xj_scanf`, and `proctor-libc` are declared at
-   minimum versions `1.25.2`, `0.2.6`, and `0.1.0`, respectively, preserving
-   their other dependency fields;
-4. runs ordinary Crat `expand` followed immediately by `unexpand`, with
-   `--unexpand-use-print`;
+   minimum versions `1.25.2`, `0.2.6`, and `0.3.0`, respectively. Canonical
+   crates.io requirements are added or raised while other table fields are
+   retained; git, path, workspace, and alternate-registry dependencies remain
+   untouched. Unrecognized or malformed version requirement strings are
+   normalized to the required minimum; structurally invalid dependency values
+   or applicable table shapes, and canonical-name alias collisions, fail;
+4. prepares the copied project by rerunning ordinary Crat `expand` and
+   `unexpand` as adjacent passes, with `--unexpand-use-print`; the checked-in
+   pipeline supplies this input through a broader earlier Crat sequence whose
+   selected intervening transformations include `prepare`;
 5. validates the optional rule document in Crat and generates immutable dual-
    view skeleton records, applying matching rules when supplied;
 6. normalizes target-function safety in the current library source;
@@ -106,11 +111,28 @@ The checked-in local pipeline selects Crat's ordinary `prepare` pass after
 preserving blocks and lifts function-local statics into their nearest lexical
 modules. It rewrites compiler-resolved uses to follow each lift and renames a
 static when crate-wide value binders or the destination's implicit prelude
-would collide. Preparation is atomic: unsupported input or a scoped initializer
-or type dependency produces no changed source. The CRAT adapter's default pass
-chain does not select this local-pipeline normalization.
+would collide. The same pass syntax-directly rewrites supported unqualified
+ctype calls and recognized glibc classification and case-table idioms to fully
+qualified `proctor_libc` calls; near-matches remain unchanged. These safe
+replacements operate in the C locale over inputs for which C defines ctype
+behavior, with classification results normalized to `0` or `1`. Under the
+same fixed-C-locale model, the pass removes standalone semicolon statements
+whose expression, after peeling parentheses, is a call to a path ending in
+`setlocale`, including all argument evaluation; value-used, renamed or
+aliased, and indirect calls remain unchanged.
 
-Ordinary `crat` owns the initial `expand,unexpand` preparation. Expand cleanup
+Analysis failures, unsupported input, and scoped initializer or type
+dependencies produce no preparation result. A successful result requests
+`proctor-libc >=0.3.0` only when it contains a committed ctype rewrite.
+Preservation-aware dependency normalization then completes before the prepared
+source is published, so a dependency failure cannot leave source that requires
+a missing crate; a later source-write failure may leave the harmless dependency
+change. The CRAT adapter's default pass chain does not select this local-
+pipeline normalization.
+
+Ordinary `crat` also owns the stage-local adjacent `expand,unexpand`
+preparation. This rerun is separate from the upstream multi-pass sequence,
+where selected transformations intervene between those passes. Expand cleanup
 preserves explicitly declared `[[bin]].path` sources, the root `build.rs`, and
 the root `target/`; it removes obsolete Rust source files before writing the
 expanded library source. Explicit bin paths are lexically normalized and may
@@ -169,12 +191,16 @@ Records are emitted in deterministic recursive source order for:
 Each record has a numeric ID, item kind, and crate-relative path. Function
 records additionally contain a final name, annotated source, source and target
 signatures, direct dependencies, signature dependencies, resolved foreign-
-function and foreign-static names, and two complete skeleton views. The
-`baseline` view contains the ordinary analysis result. The `applied` view has
-the same label topology and signature but includes every statement that was
-completely fixed by selected rules. Each view carries its own skeleton,
-transformation flag, recursive statement-disposition forest, and statement-pair
-metadata for labels included in the diagnostic report.
+function and foreign-static names, an exact sorted duplicate-free list of
+consuming `printf` source specifiers, compiler-resolved paths for direct calls
+to external `proctor_libc` free functions, and two complete skeleton views.
+The specifier and resolved-call lists are sorted, duplicate-free per-function
+advisory metadata, independent of both views, and do not create graph
+dependencies. The `baseline` view contains the ordinary analysis result. The
+`applied` view has the same label topology and signature but includes every
+statement that was completely fixed by selected rules. Each view carries its
+own skeleton, transformation flag, recursive statement-disposition forest,
+and statement-pair metadata for labels included in the diagnostic report.
 
 Dependencies are compiler-resolved, direct rather than transitive, sorted,
 and deduplicated. Foreign functions and statics do not become transformable
@@ -221,6 +247,15 @@ converted to canonical `::std::print!` templates. Their consuming arguments
 use a separate rule family keyed by the exact format specifier and source
 types. Every argument must be covered before the statement is installed;
 otherwise the complete statement remains LLM work.
+
+Deterministic conversion covers admitted static flags, widths, precisions, and
+lengths for signed and unsigned integers, byte strings, and fixed, scientific,
+general, and hexadecimal floating forms. Unsupported conversions, dynamic
+width or precision, positional syntax, or any other unsupported format leaves
+the whole call on the ordinary transformation path. Validation and replacement
+independently enforce the trusted Rust format and argument-slot count; adapter
+and value choice remains advisory, and the candidate Cargo build is
+authoritative for type correctness.
 
 Region selection starts from eligible raw-pointer bindings and supported local
 C foreign calls. It retains inclusion-maximal disjoint subtrees in source
@@ -377,12 +412,26 @@ without a rule application remains fatal.
 The prompt contains:
 
 - each member's annotated source and target skeleton, ordered by item ID;
-- resolved foreign-function and foreign-static names for each member when
-  present;
+- resolved foreign-function and foreign-static names for each member, plus
+  guidance selected by those names, exact `printf` metadata, and resolved
+  `proctor_libc` calls, when present;
 - direct dependency entries;
 - every SCC member signature for a recursive SCC; and
 - a breadth-first closure through signature dependencies for value items and
   ordinary dependencies for type items.
+
+Only current SCC members activate guidance; records rendered as dependency
+context do not. Exact foreign names select only the relevant scanning, Rust,
+`proctor-libc`, and foreign-static references, including both shared and
+mutable suffix forms for applicable `strto*` calls. Exact `printf` specifiers
+select the trusted-format, slot-order, C-length-conversion, and required adapter
+advice. When every signed specifier in the SCC is proven safe for native Rust
+integer formatting, the generic invariants remain but signed-wrapper advice is
+omitted; integer precision, space-sign behavior, or an unproved signed form
+retains it. Resolved `proctor_libc` call paths advise retaining the same
+resolved callee when its transformation region is rewritten, while allowing
+arguments and surrounding code to adapt to target types. This guidance is not
+structurally validated.
 
 Dependency entries are rendered in item-ID order using kind and final name.
 Only complete breadth-first depths are admitted. Mandatory context exceeding
@@ -404,9 +453,11 @@ blocks, selects the longest block, and chooses the first on equal length.
 Missing fenced code is a repairable formatting failure.
 
 The stage permits one initial generation and at most ten repair generations
-across applied processing and any baseline fallback. Each repair is a fresh
-request containing only the latest failed transformation and diagnostics. A
-fallback never returns to the applied views for that SCC.
+across applied processing and any baseline fallback. Each repair rerenders the
+complete SCC prompt with unchanged member-derived guidance plus only the latest
+failed transformation and diagnostics; failure history is not accumulated.
+Baseline fallback changes the selected views but retains that guidance and
+never returns to the applied views for that SCC.
 
 Missing fenced code, structurally invalid returned Rust, and candidate build
 failures are repairable. A build failure involving applied rules first causes

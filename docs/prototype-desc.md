@@ -49,9 +49,7 @@ The stage does not:
 
 - run a test package or establish semantic correctness;
 - produce a rule set as a framework output;
-- interpret or update `proctor.toml` or its wrapper metadata;
 - transform pointer-containing named types or global variable types;
-- remove compatibility wrappers after all functions are transformed; or
 - checkpoint and resume individual function groups within one stage
   invocation.
 
@@ -59,17 +57,19 @@ Separately from the stage contract, `crat-tool` can synthesize rules from one
 or more observation documents and merge multiple observation documents. These
 are not PROCTOR stages and do not consume or produce framework artifacts.
 
-An existing `proctor.toml` is copied with the project but otherwise ignored.
-The output is required to build, not to pass a behavioral test suite.
+The input project must contain a valid `proctor.toml` with a target kind, API
+list, and empty wrapper list. The stage reads it before tool work and records
+permanent API wrapper relationships in the copied output manifest. The output
+is required to build, not to pass a behavioral test suite.
 
 ## End-to-end flow
 
 For one stage invocation, the implementation:
 
-1. validates the stage envelope, configuration, Cargo layout, and
-   non-overlapping filesystem boundaries;
+1. validates the stage envelope, configuration, Cargo layout, project
+   manifest, and non-overlapping filesystem boundaries;
 2. builds or reuses release `crat` and `crat-tool` binaries;
-3. copies the complete input project to `work/current` and ensures crates.io
+3. copies the complete input project to `work/analysis` and ensures crates.io
    dependencies on `bytemuck`, `xj_scanf`, and `proctor-libc` are declared at
    minimum versions `1.25.2`, `0.2.6`, and `0.3.0`, respectively. Canonical
    crates.io requirements are added or raised while other table fields are
@@ -81,28 +81,35 @@ For one stage invocation, the implementation:
    `unexpand` as adjacent passes, with `--unexpand-use-print`; the checked-in
    pipeline supplies this input through a broader earlier Crat sequence whose
    selected intervening transformations include `prepare`;
-5. validates the optional rule document in Crat and generates immutable dual-
-   view skeleton records, applying matching rules when supplied;
-6. normalizes target-function safety in the current library source;
-7. requires the normalized project to pass `cargo build`;
-8. constructs the function graph and a deterministic leaf-first SCC schedule;
-9. processes each SCC from its applied view mechanically or with an LLM;
-10. structurally validates LLM output when an LLM was used;
-11. asks Crat to produce a complete candidate library source and a canonical
-    statement-pair sidecar, plus a separate labeled observation source and
-    digest-bound correspondence metadata;
-12. validates, installs, and builds the candidate transactionally, retaining
-    its source and statement pairs only on success;
-13. extracts typed expression observations from the labeled source only after
-    the candidate build succeeds;
-14. asks Crat to merge the accepted observation documents without Python
-    parsing or reserialization; and
-15. copies the final project to the declared output and publishes the
+5. validates the optional rule document in Crat, generates immutable dual-view
+   skeleton records, and normalizes target-function safety in the complete
+   analysis source;
+6. copies that project to `work/current`, projects its library to retained
+   non-function context, and requires `cargo build --lib` to pass;
+7. constructs the function graph and a deterministic leaf-first SCC schedule
+   from the complete source;
+8. processes each SCC from its applied view mechanically or with an LLM and
+   structurally validates LLM output when used;
+9. asks Crat to add the SCC's transformed functions to a candidate partial
+   library, with a canonical statement-pair sidecar and separate labeled
+   observation source and correspondence metadata;
+10. validates the outputs, installs the candidate, and accepts it only after a
+    transactional `cargo build --lib` succeeds;
+11. extracts typed expression observations from the labeled source after the
+    candidate build succeeds;
+12. finalizes the project by restoring excluded `main` functions, adding any
+    required library API wrappers, updating `proctor.toml`, and requiring an
+    ordinary `cargo build` with the final source and manifest installed;
+13. asks Crat to merge accepted observation documents without Python parsing
+    or reserialization; and
+14. copies the final project to the declared output and publishes the
     statement-pair report and merged `observations.json`.
 
-The initial input copy retains an existing `target/`. Candidate builds also
-retain their changes to `target/` after a source rollback. Earlier successful
-SCCs remain promoted while later SCCs are processed.
+The complete analysis source remains unchanged during SCC processing. The
+accepted target library source contains only retained context and build-
+accepted functions until finalization. The copies retain an existing `target/`;
+candidate builds may leave changes there after a source rollback. Earlier
+successful SCCs remain promoted while later SCCs are processed.
 
 ## Crat preparation and tool boundary
 
@@ -138,17 +145,22 @@ the root `target/`; it removes obsolete Rust source files before writing the
 expanded library source. Explicit bin paths are lexically normalized and may
 not be absolute or escape the crate root.
 
-`crat-tool` exposes eight local-transformation operations:
+`crat-tool` exposes these local-transformation operations:
 
+- `make-initial` projects the complete prepared library to non-function
+  context while retaining its crate and module structure;
 - `make-skeleton` compiles the prepared library, optionally loads and applies
   a rule document, and writes JSON item records;
 - `validate` parses a validation request and returned Rust snippets without
   compiling a project;
 - `normalize-safety` rewrites one Rust source file;
-- `replace` compiles the current project for name resolution and writes one
-  complete candidate source file, one canonical statement-pair sidecar, a
-  separate labeled observation source, and digest-bound correspondence
-  metadata; and
+- `add-functions` resolves functions against the complete analysis project and
+  inserts one SCC into the accepted partial library, emitting a canonical
+  statement-pair sidecar and separate observation source and metadata;
+- `finalize-project` restores excluded `main` functions and writes the final
+  source and copied project manifest with permanent API wrappers;
+- `replace` retains complete-source replacement and compatibility behavior for
+  direct callers;
 - `extract-observations` compiles only the labeled observation source and
   writes a versioned closed observation document;
 - `synthesize-rules` validates one or more observation documents and writes a
@@ -159,9 +171,10 @@ not be absolute or escape the crate root.
   argument and member order.
 
 Filesystem I/O and command dispatch remain thin CLI responsibilities.
-Skeleton generation, validation, preservation, and replacement are in the
-Crat `tools` library. SCC scheduling, LLM use, sidecar acceptance, build
-transactions, repair, and report rendering remain in the Python stage.
+Skeleton generation, validation, preservation, source assembly, and
+finalization are in the Crat `tools` library. SCC scheduling, LLM use,
+sidecar acceptance, build transactions, repair, and report rendering remain
+in the Python stage.
 
 ## Skeleton and analysis model
 
@@ -357,42 +370,50 @@ replacer independently performs the same canonical restoration.
 ## Replacement and compatibility
 
 Before SCC processing, safety normalization recursively makes every
-source-defined free function except `main` unsafe. The operation is
-idempotent.
+source-defined free function except `main` unsafe in the complete analysis
+source. The operation is idempotent. Crat then projects the accepted target
+source to its non-function crate context, including inline modules, imports,
+foreign declarations, types, constants, and statics. Source-defined functions,
+including `main`, are absent until added or restored later. This projection
+must compile as a library; a retained item that requires an omitted function
+is unsupported.
 
-Replacement resolves each target by its full crate-relative path. It requires
-the exact requested function set and a previously normalized current target.
-The accepted implementation keeps the current function's visibility and
-non-export metadata while adopting the validated target lifetime declaration,
-parameters, return type, and canonicalized body. PROCTOR statement labels are
-removed from emitted code.
+For each SCC, Crat resolves the exact requested functions by full crate-
+relative path against the complete analysis source. It adds their transformed
+implementations together at their original paths in the partial target,
+keeping visibility and non-export metadata while adopting the validated target
+lifetimes, signatures, and canonicalized bodies. PROCTOR statement labels are
+removed. No original caller or compatibility wrapper enters the incremental
+target, so a changed internal signature does not require wrapper conversion.
 
-When parameter or return types change, Crat normally leaves the transformed
-implementation at its original path and creates a collision-free same-module
-compatibility wrapper with the old signature. Compiler-resolved callers
-outside the current SCC are redirected to the wrapper; calls within the SCC,
-including recursion, remain direct.
+Only after all SCCs are accepted does Crat restore excluded `main` functions
+and consider library API entries from `proctor.toml`. Each API entry must match
+an original function name or explicit export name. A changed API signature
+receives a collision-free same-module compatibility wrapper with the original
+signature; an unchanged API or a non-API function receives none. The output
+manifest records only these permanent wrapper relationships. A nonempty input
+wrapper list is unsupported.
 
 Wrapper generation supports the implemented raw-pointer conversions to and
 from references, optional references, slices, boxes, optional boxes, and
 selected boxed-slice returns. Unlisted conversions, including boxed-slice
-inputs, fail the whole replacement. Slice inputs use the prototype's fixed
-length of `1_000_000` and map null to an empty slice; slice returns map empty
-to null and nonempty slices to their data pointer.
-
-Export responsibility moves to the wrapper when required. An implementation
-`#[no_mangle]` becomes the corresponding wrapper export name, an explicit
-`#[export_name]` moves unchanged, and unrelated attributes stay with the
-implementation.
+inputs, fail finalization. Slice inputs use the prototype's fixed length of
+`1_000_000` and map null to an empty slice; slice returns map empty to null
+and nonempty slices to their data pointer. Export responsibility moves to the
+wrapper when required: an implementation `#[no_mangle]` becomes the
+corresponding wrapper export name, an explicit `#[export_name]` moves
+unchanged, and unrelated attributes stay with the implementation.
 
 A two-argument `main_0` does not receive an ordinary compatibility wrapper.
-Instead, Crat mechanically replaces its sibling safe `main` with a forwarding
+Crat restores its sibling safe `main` as the existing fixed forwarding
 boundary that constructs mutable argument slices and calls the transformed
-`main_0`. A zero-argument `main_0` leaves the existing `main` unchanged.
+`main_0`; without that sibling, finalization fails. A zero-argument `main_0`
+leaves its sibling `main` unchanged, and other excluded `main` bodies are
+restored unchanged. The final complete project must build.
 
-Replacement is atomic: target resolution, wrapper conversion, call rewriting,
-macro safety, and all other checks complete before one candidate source string
-is returned. A required call redirect hidden in macro token input is rejected.
+Additive insertion and finalization return candidate source only after their
+resolution and compatibility checks succeed. A required old-call redirect in
+scratch macro token input is unsupported.
 
 ## Function scheduling and prompt context
 
@@ -465,27 +486,34 @@ the one-way baseline fallback described above.
 
 Setup or protocol errors, malformed validator output, tool failures,
 replacement failures, provider terminal errors, context overflow, initial
-normalization/build failure, and mechanical SCC failures without rule
-application abort the stage.
+partial-library build failure, finalization or final-build failure, and
+mechanical SCC failures without rule application abort the stage.
 
 ## Build transaction and reporting
 
-Crat writes a scratch candidate source. The stage copies the current library
-source to a rollback file, atomically installs the candidate, and runs
-`cargo build`.
+Crat writes a scratch candidate partial-library source for each SCC. The
+stage validates its sidecars, copies the current library source to a rollback
+file, atomically installs the candidate, and runs `cargo build --lib`.
 
 On success, the candidate remains current and the rollback is removed. On a
 build failure or builder exception, the previous library source is restored.
 Failure to restore is fatal. Only the root library source is rolled back;
-Cargo build artifacts remain. Each replacement attempt also writes a scratch
-sidecar. The stage validates it before candidate installation and retains its
-canonical groups only after a successful build.
+Cargo build artifacts remain. Each addition also writes a scratch statement-
+pair sidecar. The stage retains its canonical groups only after a successful
+build.
 
-The ordinary candidate and statement-pair sidecar are unchanged by observation
+The candidate and statement-pair sidecar are unchanged by observation
 collection. After an accepted SCC with remaining transform labels, Crat uses a
-separate labeled source and callable correspondence to extract a typed
-observation document. PROCTOR retains accepted documents opaquely; failed,
-superseded, and rule-complete attempts contribute none.
+separate labeled source with copies of that SCC's original functions and
+temporary old-signature call stubs for previously accepted callees where
+needed. Digest-bound correspondence metadata connects those scratch items to
+the accepted implementations for typed extraction. Neither source copies nor
+stubs enter the accepted project. PROCTOR retains accepted documents opaquely;
+failed, superseded, and rule-complete attempts contribute none.
+
+After all SCCs, Crat stages final source and an updated `proctor.toml`. The
+stage installs both for one ordinary `cargo build` and restores both on
+failure. Only a successful full build makes them the project published below.
 
 For an accepted print transformation, Crat recovers each user argument through
 rustc's expanded `FormatArgs` mapping and emits one typed observation per

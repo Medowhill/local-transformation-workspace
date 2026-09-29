@@ -13,7 +13,7 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--7 and Amendments 1--9 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--10 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
@@ -203,11 +203,11 @@ generic dependency publication.
 
 ## Amendment 10
 
-Amendment 10 plans additive local transformation: compile a function-free
-library, then accepted leaf-first SCCs, without callers or wrappers in the
-target. Scratch source supports typed observations. Finalization restores
-`main`, adds changed library API wrappers with the existing generator, and
-runs a full build. Behavioral tests and repair remain deferred.
+Amendment 10 made local transformation additive: a projected function-free
+library and each leaf-first SCC build without untouched callers or wrappers.
+Scratch source supports typed observations. Finalization restores `main`,
+adds wrappers only for changed library APIs, updates the project manifest,
+and runs a full build. Behavioral tests and whole-program repair remain deferred.
 
 - [Detailed Amendment 10 plan](amendment-10-plan.md)
 - [Amendment 10 test plan](amendment-10-test-plan.md)

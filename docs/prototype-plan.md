@@ -13,7 +13,7 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--7 and Amendments 1--10 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--11 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
@@ -214,9 +214,9 @@ and runs a full build. Behavioral tests and whole-program repair remain deferred
 
 ## Amendment 11
 
-Amendment 11 removes permanent library API wrapper generation from local
+Amendment 11 removed permanent library API wrapper generation from local
 transformation finalization while retaining additive assembly, `main`
-restoration, and the final build. It also removes the obsolete general Crat
+restoration, and the final build. It also removed the obsolete general Crat
 `replace` operation and its temporary wrappers. No interface pass runs after
 local transformation; changed slice APIs therefore do not preserve the C ABI.
 

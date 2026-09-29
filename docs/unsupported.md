@@ -73,10 +73,10 @@ additional bin body requiring transformation, or another executable layout is
 unsupported.
 
 The project must contain a valid `proctor.toml`. The local stage reads its
-target kind and API list, and records final API wrapper relationships in the
-copied output manifest. A nonempty input `wrappers` list is unsupported and
-rejected before transformation. Functions known to be wrappers from a prior
-stage are not local-transformation targets.
+target kind and API list and copies the manifest unchanged into its output.
+A nonempty input `wrappers` list is unsupported and rejected before
+transformation. Functions known to be wrappers from a prior stage are not
+local-transformation targets.
 
 The projected library must build after every source-defined free function is
 omitted. A retained global initializer or import that requires an omitted
@@ -108,7 +108,7 @@ An explicit source ABI such as `extern "C"`, visibility, an export attribute,
 or `#[no_mangle]` is not unsupported by itself. The simultaneous
 `no_mangle`/`export_name` combination above is the exception. Skeleton
 generation sanitizes explicit ABI and `no_mangle` syntax only in presentation
-text and preserves the real project metadata for later wrapper handling.
+text and preserves the real project metadata on the accepted function.
 
 Foreign function declarations and calls, including libc calls, are context
 rather than transformation targets. Their presence is not unsupported merely
@@ -248,8 +248,8 @@ macro statement as a labeled expression hole. For example, `println!("hello")`
 is supported, while `println!("{}", local_fn())` is unsupported. Calls
 introduced internally by macro expansion do not violate this source-token
 restriction. Expanded-HIR dependency collection may still observe a source
-call nested in a macro input, but item replacement cannot reliably redirect
-that call in the unexpanded surface AST.
+call nested in a macro input, but observation source construction cannot
+reliably redirect that call in the unexpanded surface AST.
 
 Ordinary `derive`, `repr`, and other supported item attributes are preserved.
 A derive is supported only under the assumption that every generated HIR item
@@ -389,35 +389,16 @@ Ordinary globals that can remain unchanged are supported as dependency
 context. This includes scalar constants/statics and other globals whose
 existing representation remains valid.
 
-### 6.3 API wrapper conversion
+### 6.3 Library API compatibility
 
-For a library API function whose parameter or return types change, the
-prototype supports final compatibility wrappers only for the following
-conversions. Changed internal functions receive no compatibility wrapper.
-
-From a raw-pointer source parameter to a target parameter:
-
-- references and optional references;
-- slices, using the provisional null-to-empty behavior and a fixed
-  1,000,000-element bound;
-- scalar boxes and optional scalar boxes; and
-- raw pointers.
-
-Target parameters of type `Option<&[T]>`, `Option<&mut [T]>`, `Box<[T]>`, or
-`Option<Box<[T]>>` are unsupported. Nullable target slices and boxed-slice
-input conversion are deferred.
-
-From a target return to a raw-pointer source return:
-
-- references and optional references;
-- slices, using the provisional empty-to-null behavior;
-- scalar boxes and optional scalar boxes;
-- boxed slices and optional boxed slices; and
-- raw pointers.
-
-Structurally identical nonpointer parameters and returns pass through. Any
-other signature change, including a custom-type conversion, is unsupported.
-Exported-global wrappers are unsupported.
+Finalization keeps every accepted function at its original path with its
+transformed signature and original export attributes. It does not create
+compatibility wrappers or convert arguments and returns back to source types.
+The final Cargo build checks that the Rust project compiles; it does not check
+the original C ABI or behavior. In particular, an exported slice reference or
+boxed slice may have a different ABI from the original C pointer. Exported
+callers must use the accepted interface or be handled by a separate interface
+step outside this local stage.
 
 ### 6.4 Synthesized type spelling
 

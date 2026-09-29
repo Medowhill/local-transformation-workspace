@@ -58,9 +58,9 @@ or more observation documents and merge multiple observation documents. These
 are not PROCTOR stages and do not consume or produce framework artifacts.
 
 The input project must contain a valid `proctor.toml` with a target kind, API
-list, and empty wrapper list. The stage reads it before tool work and records
-permanent API wrapper relationships in the copied output manifest. The output
-is required to build, not to pass a behavioral test suite.
+list, and empty wrapper list. The stage reads it before tool work and copies it
+unchanged into the output. The output is required to build, not to pass a
+behavioral test suite.
 
 ## End-to-end flow
 
@@ -97,9 +97,9 @@ For one stage invocation, the implementation:
     transactional `cargo build --lib` succeeds;
 11. extracts typed expression observations from the labeled source after the
     candidate build succeeds;
-12. finalizes the project by restoring excluded `main` functions, adding any
-    required library API wrappers, updating `proctor.toml`, and requiring an
-    ordinary `cargo build` with the final source and manifest installed;
+12. finalizes the project by restoring excluded `main` functions, retaining
+    accepted library API functions directly, and requiring an ordinary
+    `cargo build` with the final source and copied manifest installed;
 13. asks Crat to merge accepted observation documents without Python parsing
     or reserialization; and
 14. copies the final project to the declared output and publishes the
@@ -158,9 +158,7 @@ not be absolute or escape the crate root.
   inserts one SCC into the accepted partial library, emitting a canonical
   statement-pair sidecar and separate observation source and metadata;
 - `finalize-project` restores excluded `main` functions and writes the final
-  source and copied project manifest with permanent API wrappers;
-- `replace` retains complete-source replacement and compatibility behavior for
-  direct callers;
+  source and an unchanged copy of the validated project manifest;
 - `extract-observations` compiles only the labeled observation source and
   writes a versioned closed observation document;
 - `synthesize-rules` validates one or more observation documents and writes a
@@ -265,10 +263,10 @@ Deterministic conversion covers admitted static flags, widths, precisions, and
 lengths for signed and unsigned integers, byte strings, and fixed, scientific,
 general, and hexadecimal floating forms. Unsupported conversions, dynamic
 width or precision, positional syntax, or any other unsupported format leaves
-the whole call on the ordinary transformation path. Validation and replacement
-independently enforce the trusted Rust format and argument-slot count; adapter
-and value choice remains advisory, and the candidate Cargo build is
-authoritative for type correctness.
+the whole call on the ordinary transformation path. Validation and additive
+insertion independently enforce the trusted Rust format and argument-slot
+count; adapter and value choice remains advisory, and the candidate Cargo
+build is authoritative for type correctness.
 
 Region selection starts from eligible raw-pointer bindings and supported local
 C foreign calls. It retains inclusion-maximal disjoint subtrees in source
@@ -364,10 +362,10 @@ deterministic, function-oriented diagnostics. A conforming result produces
 `valid`.
 
 Preserved output is not trusted. The validator restores preserved groups and
-shells from the immutable target skeleton before checking the result, and the
-replacer independently performs the same canonical restoration.
+shells from the immutable target skeleton before checking the result, and
+additive insertion independently performs the same canonical restoration.
 
-## Replacement and compatibility
+## Source assembly and finalization
 
 Before SCC processing, safety normalization recursively makes every
 source-defined free function except `main` unsafe in the complete analysis
@@ -381,38 +379,29 @@ is unsupported.
 For each SCC, Crat resolves the exact requested functions by full crate-
 relative path against the complete analysis source. It adds their transformed
 implementations together at their original paths in the partial target,
-keeping visibility and non-export metadata while adopting the validated target
-lifetimes, signatures, and canonicalized bodies. PROCTOR statement labels are
-removed. No original caller or compatibility wrapper enters the incremental
-target, so a changed internal signature does not require wrapper conversion.
+keeping their visibility, calling convention, and attributes while adopting
+the validated target lifetimes, signatures, and canonicalized bodies. PROCTOR
+statement labels are removed. No untouched source function enters the
+incremental target.
 
 Only after all SCCs are accepted does Crat restore excluded `main` functions
-and consider library API entries from `proctor.toml`. Each API entry must match
-an original function name or explicit export name. A changed API signature
-receives a collision-free same-module compatibility wrapper with the original
-signature; an unchanged API or a non-API function receives none. The output
-manifest records only these permanent wrapper relationships. A nonempty input
-wrapper list is unsupported.
+and validate library API entries from `proctor.toml`. Each API entry must match
+an original Rust function name or explicit export name. Accepted API functions
+remain at their original paths with their transformed signatures and original
+export attributes. Finalization creates no compatibility wrappers or type
+conversions, and the copied manifest retains its empty wrapper list. A
+nonempty input wrapper list is unsupported. An exported slice reference or
+boxed slice may therefore have a different ABI from the original C pointer;
+the final Cargo build does not check C ABI compatibility.
 
-Wrapper generation supports the implemented raw-pointer conversions to and
-from references, optional references, slices, boxes, optional boxes, and
-selected boxed-slice returns. Unlisted conversions, including boxed-slice
-inputs, fail finalization. Slice inputs use the prototype's fixed length of
-`1_000_000` and map null to an empty slice; slice returns map empty to null
-and nonempty slices to their data pointer. Export responsibility moves to the
-wrapper when required: an implementation `#[no_mangle]` becomes the
-corresponding wrapper export name, an explicit `#[export_name]` moves
-unchanged, and unrelated attributes stay with the implementation.
-
-A two-argument `main_0` does not receive an ordinary compatibility wrapper.
-Crat restores its sibling safe `main` as the existing fixed forwarding
+A two-argument `main_0` uses its sibling safe `main` as the fixed forwarding
 boundary that constructs mutable argument slices and calls the transformed
 `main_0`; without that sibling, finalization fails. A zero-argument `main_0`
 leaves its sibling `main` unchanged, and other excluded `main` bodies are
 restored unchanged. The final complete project must build.
 
 Additive insertion and finalization return candidate source only after their
-resolution and compatibility checks succeed. A required old-call redirect in
+resolution and structural checks succeed. A required old-call redirect in
 scratch macro token input is unsupported.
 
 ## Function scheduling and prompt context
@@ -460,8 +449,8 @@ Only complete breadth-first depths are admitted. Mandatory context exceeding
 before exceeding the limit.
 
 The chosen views remain immutable prompt input even after earlier SCCs change
-the promoted source. Prompting, validation, replacement, and reporting use the
-same view for every member.
+the promoted source. Prompting, validation, additive insertion, and reporting
+use the same view for every member.
 
 ## LLM response and repair
 
@@ -485,7 +474,7 @@ failures are repairable. A build failure involving applied rules first causes
 the one-way baseline fallback described above.
 
 Setup or protocol errors, malformed validator output, tool failures,
-replacement failures, provider terminal errors, context overflow, initial
+additive insertion failures, provider terminal errors, context overflow, initial
 partial-library build failure, finalization or final-build failure, and
 mechanical SCC failures without rule application abort the stage.
 
@@ -511,8 +500,8 @@ the accepted implementations for typed extraction. Neither source copies nor
 stubs enter the accepted project. PROCTOR retains accepted documents opaquely;
 failed, superseded, and rule-complete attempts contribute none.
 
-After all SCCs, Crat stages final source and an updated `proctor.toml`. The
-stage installs both for one ordinary `cargo build` and restores both on
+After all SCCs, Crat stages final source and an unchanged `proctor.toml` copy.
+The stage installs both for one ordinary `cargo build` and restores both on
 failure. Only a successful full build makes them the project published below.
 
 For an accepted print transformation, Crat recovers each user argument through
@@ -589,7 +578,7 @@ disabled implicit preludes, and source-authored custom preludes.
 
 Beyond the preparation behavior above, [unsupported.md](unsupported.md)
 describes the remaining conceptual input restrictions. Current Crat generation,
-validation, and replacement checks remain authoritative for mechanically
+validation, and source assembly checks remain authoritative for mechanically
 enforced restrictions.
 
 For historical implementation details, continue with

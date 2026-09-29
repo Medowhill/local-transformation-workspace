@@ -211,3 +211,14 @@ and runs a full build. Behavioral tests and whole-program repair remain deferred
 
 - [Detailed Amendment 10 plan](amendment-10-plan.md)
 - [Amendment 10 test plan](amendment-10-test-plan.md)
+
+## Amendment 11
+
+Amendment 11 removes permanent library API wrapper generation from local
+transformation finalization while retaining additive assembly, `main`
+restoration, and the final build. It also removes the obsolete general Crat
+`replace` operation and its temporary wrappers. No interface pass runs after
+local transformation; changed slice APIs therefore do not preserve the C ABI.
+
+- [Detailed Amendment 11 plan](amendment-11-plan.md)
+- [Amendment 11 test plan](amendment-11-test-plan.md)

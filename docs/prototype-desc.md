@@ -84,15 +84,16 @@ For one stage invocation, the implementation:
 5. validates the optional rule document in Crat, generates immutable dual-view
    skeleton records, and normalizes target-function safety in the complete
    analysis source;
-6. copies that project to `work/current`, projects its library to retained
-   non-function context, and requires `cargo build --lib` to pass;
+6. copies that project to `work/current`, retains non-function context and
+   minimal declarations for pending non-`main` functions, and requires
+   `cargo build --lib` to pass;
 7. constructs the function graph and a deterministic leaf-first SCC schedule
    from the complete source;
 8. processes each SCC from its applied view mechanically or with an LLM and
    structurally validates LLM output when used;
-9. asks Crat to add the SCC's transformed functions to a candidate partial
-   library, with a canonical statement-pair sidecar and separate labeled
-   observation source and correspondence metadata;
+9. asks Crat to replace the SCC's pending declarations with transformed
+   functions in a candidate partial library, with a canonical statement-pair
+   sidecar and separate labeled observation source and correspondence metadata;
 10. validates the outputs, installs the candidate, and accepts it only after a
     transactional `cargo build --lib` succeeds;
 11. extracts typed expression observations from the labeled source after the
@@ -106,8 +107,8 @@ For one stage invocation, the implementation:
     statement-pair report and merged `observations.json`.
 
 The complete analysis source remains unchanged during SCC processing. The
-accepted target library source contains only retained context and build-
-accepted functions until finalization. The copies retain an existing `target/`;
+current target library contains retained context, declarations for unfinished
+functions, and build-accepted functions. The copies retain an existing `target/`;
 candidate builds may leave changes there after a source rollback. Earlier
 successful SCCs remain promoted while later SCCs are processed.
 
@@ -147,16 +148,16 @@ not be absolute or escape the crate root.
 
 `crat-tool` exposes these local-transformation operations:
 
-- `make-initial` projects the complete prepared library to non-function
-  context while retaining its crate and module structure;
+- `make-initial` retains non-function context and replaces pending non-`main`
+  functions with minimal declarations at their original paths;
 - `make-skeleton` compiles the prepared library, optionally loads and applies
   a rule document, and writes JSON item records;
 - `validate` parses a validation request and returned Rust snippets without
   compiling a project;
 - `normalize-safety` rewrites one Rust source file;
 - `add-functions` resolves functions against the complete analysis project and
-  inserts one SCC into the accepted partial library, emitting a canonical
-  statement-pair sidecar and separate observation source and metadata;
+  replaces one SCC's pending declarations in the partial library, emitting a
+  canonical statement-pair sidecar and separate observation source and metadata;
 - `finalize-project` restores excluded `main` functions and writes the final
   source and an unchanged copy of the validated project manifest;
 - `extract-observations` compiles only the labeled observation source and
@@ -369,20 +370,28 @@ additive insertion independently performs the same canonical restoration.
 
 Before SCC processing, safety normalization recursively makes every
 source-defined free function except `main` unsafe in the complete analysis
-source. The operation is idempotent. Crat then projects the accepted target
-source to its non-function crate context, including inline modules, imports,
-foreign declarations, types, constants, and statics. Source-defined functions,
-including `main`, are absent until added or restored later. This projection
-must compile as a library; a retained item that requires an omitted function
-is unsupported.
+source. The operation is idempotent. Crat then keeps the non-function crate
+context, including inline modules, imports, foreign declarations, types,
+constants, and statics. In place of each source-defined free function except
+`main`, it leaves a declaration with the original visibility and name, empty
+parameters, and an empty body. It discards the original signature, safety, ABI,
+and attributes. Excluded `main` functions remain absent. This initial source
+must compile as a library.
 
 For each SCC, Crat resolves the exact requested functions by full crate-
-relative path against the complete analysis source. It adds their transformed
-implementations together at their original paths in the partial target,
-keeping their visibility, calling convention, and attributes while adopting
-the validated target lifetimes, signatures, and canonicalized bodies. PROCTOR
-statement labels are removed. No untouched source function enters the
-incremental target.
+relative path against the complete analysis source. It replaces their pending
+declarations together at those paths in both the partial target and the
+separate observation source. Accepted functions take their visibility, calling
+convention, and attributes from the complete analysis source and their
+validated target lifetimes, signatures, and canonicalized bodies from the
+transformation. PROCTOR statement labels are removed from the target. No
+untouched source function body enters the incremental target.
+
+Pending declarations allow retained imports and reexports to resolve when
+visibility permits, but do not supply the original function's type or value. A
+retained static or constant that needs one, or a call built before its callee
+because a dependency escaped the SCC schedule, can still fail a Cargo build.
+Imports of excluded `main` remain unsupported by the initial library build.
 
 Only after all SCCs are accepted does Crat restore excluded `main` functions
 and validate library API entries from `proctor.toml`. Each API entry must match
@@ -492,12 +501,13 @@ pair sidecar. The stage retains its canonical groups only after a successful
 build.
 
 The candidate and statement-pair sidecar are unchanged by observation
-collection. After an accepted SCC with remaining transform labels, Crat uses a
-separate labeled source with copies of that SCC's original functions and
-temporary old-signature call stubs for previously accepted callees where
-needed. Digest-bound correspondence metadata connects those scratch items to
-the accepted implementations for typed extraction. Neither source copies nor
-stubs enter the accepted project. PROCTOR retains accepted documents opaquely;
+collection. After an accepted SCC with remaining transform labels, Crat
+extracts observations for its accepted replacements from a separate labeled
+source with copies of that SCC's original functions and temporary old-signature
+call stubs for previously accepted callees where needed. Digest-bound
+correspondence metadata connects those scratch items to the accepted
+implementations for typed extraction. Neither source copies nor stubs enter
+the accepted project. PROCTOR retains accepted documents opaquely;
 failed, superseded, and rule-complete attempts contribute none.
 
 After all SCCs, Crat stages final source and an unchanged `proctor.toml` copy.

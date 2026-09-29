@@ -13,7 +13,7 @@ Start with [prototype-desc.md](prototype-desc.md) to understand current
 behavior. Current tests, schemas, manifests, and implementation take precedence
 over every historical plan when they disagree.
 
-Phases 1--7 and Amendments 1--11 denote historical sets of tasks performed
+Phases 1--7 and Amendments 1--12 denote historical sets of tasks performed
 together. Ownership follows when work was done, not which component was
 affected. A fix to skeleton generation made while implementing a later phase
 therefore remains part of that later phase.
@@ -225,11 +225,11 @@ local transformation; changed slice APIs therefore do not preserve the C ABI.
 
 ## Amendment 12
 
-Amendment 12 plans temporary declarations for pending non-`main` functions
-at their original module paths, so retained imports can resolve during the
-initial library build. Each SCC replaces its declarations with accepted
-functions in the candidate and observation source. Existing build acceptance
-and `main` finalization remain; retained imports of `main` remain unsupported.
+Amendment 12 added temporary declarations for pending non-`main` functions at
+their original module paths so retained imports can resolve during the initial
+library build. Each SCC replaces its declarations with accepted functions in
+the candidate and observation source. Build acceptance and `main` finalization
+remain; retained imports of `main` remain unsupported.
 
 - [Detailed Amendment 12 plan](amendment-12-plan.md)
 - [Amendment 12 test plan](amendment-12-test-plan.md)

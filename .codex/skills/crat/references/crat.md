@@ -12,9 +12,9 @@
 ## Entrypoint and compiler utilities
 
 - Start with `src/bin/crat.rs` when changing pass order, CLI/config wiring, project copying, dependency changes, or output behavior.
-- Expect transformation passes `Expand`, `Preprocess`, `Extern`, `Unsafe`, `Unexpand`, `Split`, `Bin`, `Check`, `Format`, `Interface`, `Libc`, `OutParam`, `Lock`, `Union`, `Punning`, `Enum`, `Io`, `Pointer`, `Static`, and `Simpl`; expect standalone analyses `Andersen` and `OutParam`.
+- Expect transformation passes `Expand`, `Preprocess`, `Prepare`, `Extern`, `Unsafe`, `Unexpand`, `Split`, `Bin`, `Check`, `Format`, `Interface`, `Libc`, `OutParam`, `Lock`, `Union`, `Punning`, `Enum`, `Io`, `Pointer`, `Static`, and `Simpl`; expect standalone analyses `Andersen` and `OutParam`.
 - The CLI locates the crate library, optionally copies the input project, and invokes most operations through `utils::compilation::run_compiler_on_path`.
-- Keep dependency side effects in the entrypoint. Pass results currently request `bytemuck`, `num-traits`, or `tempfile` as needed.
+- Keep dependency side effects at the CLI/publication boundary. Pass results currently request `bytemuck`, `num-traits`, `tempfile`, or `proctor-libc` as needed.
 - Propagate `c_exposed_fns` through interface, unsafe, pointer, Andersen, outparam, and punning configs. Use `points_to_file` to connect Andersen output to union and outparam logic.
 
 Use these common rustc patterns:
@@ -41,6 +41,13 @@ Use these common rustc patterns:
 - File/entry: `crates/passes/src/preprocessor.rs`; `preprocessor::preprocess(tcx) -> String`.
 - Analyze parameter/local use, pointer use, call arguments, string statics, and AST-to-HIR identities.
 - Transform repeated assertions, unreachable and constant-false code, nested `unwrap`, pointer/API argument forms, pointer-offset chains, FILE aliases, byte-string transmutes, C `offsetof`, and inline numeric-conversion functions.
+
+### Prepare
+
+- Goal: normalize compiler-resolved source for local transformation.
+- File/entry: `crates/passes/src/preparer.rs`; `preparer::prepare(tcx) -> Result<PreparationResult, PrepareError>`.
+- Wrap non-block match arms, lift function-local statics to their owning module and rewrite resolved references, remove ignored `setlocale` calls, and rewrite supported ctype-table accesses through `proctor-libc`.
+- Publish a successful result through `PreparationResult::publish`, which ensures the optional `proctor-libc` dependency before writing source. Preparation errors leave source unchanged.
 
 ### Extern
 
@@ -161,5 +168,5 @@ Use these common rustc patterns:
 
 ## Focused verification
 
-- Run the affected crate's tests first, for example `cargo test -p passes`, `cargo test -p io_replacer`, or `cargo test -p union_replacer`.
+- Run the affected crate's tests first, for example `cargo test -p passes`, `cargo test -p io_replacer`, or `cargo test -p union_replacer`. Use `cargo test -p passes preparer::tests` for `Prepare`.
 - Run `cargo test --workspace` when changing the CLI, shared `utils`, pass interactions, or public cross-crate APIs.

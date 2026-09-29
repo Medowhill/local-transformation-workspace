@@ -52,7 +52,7 @@ Call out a discrepancy instead of silently implementing an older plan. Preserve 
 2. Start from `stages/example-stage/` for a framework-free stage or `stages/example-llm-stage/` for shared LLM infrastructure.
 3. Declare exact requirements and products in `stage.toml`.
 4. Read inputs only, use `framework.workdir` for scratch data, create outputs only at envelope destinations, and always emit a valid failure envelope on errors.
-5. Build and test transformation output inside the stage. Update `proctor.toml` when a non-local transformation changes persisted wrapper relationships.
+5. Build and test transformation output inside the stage. Preserve or update `proctor.toml` according to the stage's manifest contract.
 6. Add manifest/contract tests and at least one direct stage or orchestrated test.
 
 ### Change an adapter
@@ -64,8 +64,8 @@ Keep the upstream `stages/c2rust/` and `stages/crat/` submodules unmodified unle
 1. Read [contracts-and-stages.md](references/contracts-and-stages.md), then use the `$crat` skill for changes that cross into `crat-tool` or shared pointer analysis.
 2. Keep SCC scheduling, prompts, LLM repair, transactional Cargo builds, dependency preparation, artifacts, and usage accounting in `stages/local-transformation/`; keep compiler-resolved structure, replacement, trusted `printf` templates, observations, and rules in Crat.
 3. Preserve the dual skeleton views: try optional rule applications through the applied view, but fall back to the baseline view for the whole SCC after a rule-involved candidate fails to compile.
-4. Treat the input rule set as read-only. Keep replacement correspondence in stage state rather than `proctor.toml`; the stage produces a Rust project and diagnostic/learning artifacts, not a new rule set.
-5. Accept a replacement only after structural validation when LLM output is used and a transactional `cargo build` succeeds. Let SCCs whose selected views need no LLM work—because rules and/or mechanical conversions completed them—bypass the LLM and validator, but not replacement or build acceptance. Extract observations only from accepted transform regions.
+4. Treat the input rule set as read-only. Keep accepted function correspondence in stage state rather than `proctor.toml`; the stage produces a Rust project and diagnostic/learning artifacts, not a new rule set.
+5. Accept each SCC candidate only after structural validation when LLM output is used and a transactional `cargo build --lib` succeeds. SCCs completed by rules or mechanical conversions bypass the LLM and validator, but still require candidate installation and a build. Extract observations only from accepted transform regions. Finalize source and manifest together, then require a full Cargo build.
 6. Run `tests/test_local_transformation.py` and the focused Crat `tools` tests for the Rust surface you changed.
 
 ### Change the stage contract

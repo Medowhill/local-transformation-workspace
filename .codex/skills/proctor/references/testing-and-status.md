@@ -173,7 +173,7 @@ Treat these as implemented and unit-tested unless noted:
 - test-package build/run logic;
 - TRACTOR vector verification for final or per-stage bench outputs, including library workspace copies;
 - C2Rust and CRAT adapters;
-- local transformation with optional rule application, SCC-scoped LLM repair, structural validation, transactional Cargo-build acceptance, observation extraction, and statistics;
+- local transformation with optional rule application, SCC-scoped LLM repair, structural validation, additive partial-project builds, final full build, observation extraction, and statistics;
 - narrow direct-Claude dynamic-array-to-Vec abstraction recovery (implemented, but without focused unit coverage and with stale scaffold-oriented config/E2E assumptions).
 
 Treat these as planned or partial:

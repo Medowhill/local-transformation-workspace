@@ -99,24 +99,22 @@ With `[run] on_stage_failure = "continue"`, later stages run using the most rece
 
 ## Project manifest
 
-Read and update `proctor.toml` inside Rust projects after the Translation component:
+Read `proctor.toml` inside Rust projects after the Translation component:
 
 ```toml
 target_kind = "library" # or "executable"
 target_name = "example"
 api_functions = ["foo"]
-wrappers = [
-  { wrapped = "implementation::foo_impl", wrapper = "api::foo" },
-]
+wrappers = []
 ```
 
 Enforce:
 
 - Executables have no `api_functions`.
-- Library API names identify functions whose external signatures must remain stable.
+- Library `api_functions` entries name intended public API functions. Finalization requires a matching original function name or `export_name`, but does not preserve its signature.
 - Wrapper paths are crate-relative full paths.
-- Inspect existing wrapper entries before introducing another wrapper.
-- Copy the manifest with the project and update it when non-local transformations change wrapper relationships.
+- The current local-transformation stage rejects nonempty `wrappers`, keeps API declarations stable, and finalizes with an unchanged manifest. It does not create compatibility wrappers for changed signatures.
+- Copy the manifest with the project; stages that change its declarations must update it.
 
 CRAT emits the initial manifest with an empty wrapper list. C2Rust output carries `config.toml`, not `proctor.toml`.
 
@@ -143,13 +141,15 @@ Its output is library-shaped even for eventual executables. Do not run executabl
 
 Use `stages/crat-adapter/` for framework integration. It builds the pinned rustc-private CRAT tool once per submodule commit, constructs its sysroot/Z3 environment, and either runs the cumulative chain ending at configurable `final_pass` (default `bin`) or the exact ordered `passes` list. Use `pass_args.<pass>` only for selected passes; do not configure `passes` and `final_pass` together.
 
-The defined chain is:
+The default `final_pass` chain is:
 
 ```text
 expand -> extern -> preprocess -> outparam -> punning -> enum ->
 pointer -> io -> libc -> static -> simpl -> interface -> unsafe ->
 unexpand -> split -> bin
 ```
+
+`prepare` is selectable after `enum` in an explicit `passes` list and appears in `configs/c2rust_crat_local.toml`; it is not in the default chain.
 
 After copying the final pass output, emit `proctor.toml` from CRAT `config.toml` and Cargo metadata.
 
@@ -165,13 +165,13 @@ Use `stages/local-transformation/` for the implemented local pointer-transformat
 
 The stage:
 
-1. Copies the input, adds or raises crates.io requirements for `bytemuck`, `xj_scanf`, and `proctor-libc` while preserving non-registry dependencies, prepares one expanded/unexpanded root library with Crat, generates dual baseline/rule-applied skeleton views, normalizes function safety, and performs an initial Cargo build.
+1. Copies the input to a complete analysis project, adds or raises crates.io requirements for `bytemuck`, `xj_scanf`, and `proctor-libc` while preserving non-registry dependencies, prepares it with Crat, generates dual baseline/rule-applied skeleton views, and normalizes function safety. `crat-tool make-initial` creates a separate partial target library with pending function stubs; it must pass `cargo build --lib`.
 2. Schedules functions by leaf-first call-graph SCCs. It starts from rule-applied skeletons, skips the LLM when rules and/or mechanical conversions leave no transform region in the SCC, and otherwise asks the LLM only for remaining regions. Crat lowers eligible literal `printf` calls to trusted `::std::print!` templates; zero-argument templates are mechanical and value arguments may be learned or filled.
-3. Structurally validates LLM output, replaces the SCC through `crat-tool`, and installs each candidate transactionally around `cargo build`. A rule-involved compile failure retries from the baseline view for the entire SCC.
-4. Extracts typed observations only after accepted builds and carries generated wrapper correspondence into later SCC replacements.
-5. Publishes `statement-pairs.md`, merged `observations.json` (including the required `printf_observations` array), and `statistics.json` under the stage artifacts directory together with the transformed project. Optional LLM exchanges are diagnostic artifacts.
+3. Structurally validates LLM output, asks `crat-tool add-functions` to add each SCC to the partial target, and installs each candidate transactionally around `cargo build --lib`. A rule-involved compile failure retries from the baseline view for the entire SCC.
+4. Extracts typed observations only after accepted builds and carries accepted function correspondence into later SCC additions.
+5. Uses `crat-tool finalize-project` to restore excluded `main` functions and validate API declarations, then installs final source and manifest transactionally for a full Cargo build. Publishes `statement-pairs.md`, merged `observations.json` (including the required `printf_observations` array), and `statistics.json` with the transformed project. Optional LLM exchanges are diagnostic artifacts.
 
-Keep replacement correspondence in stage state and leave any copied `proctor.toml` unchanged. Do not treat `observations.json` as a rule set. Synthesize and review rules separately with `crat-tool synthesize-rules` and `pretty-print-rules`, then provide the JSON rule document to a later run. The stage does not consume a test package or run tests itself; use the orchestrator's global gate when a suitable test package is available.
+Keep accepted function correspondence in stage state and leave the published `proctor.toml` text unchanged. Do not treat `observations.json` as a rule set. Synthesize and review rules separately with `crat-tool synthesize-rules` and `pretty-print-rules`, then provide the JSON rule document to a later run. The stage does not consume a test package or run tests itself; use the orchestrator's global gate when a suitable test package is available.
 
 ### Examples and fakes
 

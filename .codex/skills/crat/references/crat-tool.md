@@ -9,43 +9,20 @@
 
 ## CLI operations
 
-### MakeSkeleton
-
-- Command: `crat-tool make-skeleton --output <records.json> [--rules <rules.json>] <input-project>`.
-- Locate the project's library with `utils::find_lib_path`, compile it with `run_compiler_on_path`, call `tools::make_skeletons_with_rules`, and serialize the result with `skeletons_to_json`.
-- Parse the optional schema-version-1 rule document strictly, including both `rules` and `printf_rules`. Emit both a baseline view and an applied view; without rules, the views are equivalent.
-- Keep file-system work in the binary; keep record construction in `crates/tools/src/skeleton.rs`.
-
-### Validate
-
-- Command: `crat-tool validate --input <request.json> --output <response.json>`.
-- Parse a schema-version-1 `ValidationRequest`, validate the returned Rust structurally, and always serialize `valid`, `invalid`, or `setup_error` JSON through `validate_json`.
-- Do not compile a Cargo project or modify source in this operation.
-
-### NormalizeSafety
-
-- Command: `crat-tool normalize-safety --output <normalized.rs> <input.rs>`.
-- Parse one source file and make every source-defined free function except `main` unsafe.
-- Run this after skeleton generation and before replacement; replacement rejects a current target that was not normalized.
-
-### Replace
-
-- Command: `crat-tool replace --request <request.json> --output <candidate.rs> --statement-pairs-output <pairs.json> --observation-source-output <observation.rs> --observation-metadata-output <metadata.json> <current-project>`.
-- Parse a schema-version-1 `ReplacementRequest`, locate the current library, compile it for resolution, and call `tools::replace_items_with_observations`.
-- Publish the candidate and all three sidecars together. Keep output paths distinct and leave the current project untouched.
-
-### Observations and rules
-
-- Use `extract-observations --metadata <metadata.json> --output <observations.json> <observation.rs>` to compile the synthetic observation source and recover typed source/target expression regions after a candidate has been accepted.
-- Use `merge-observations --output <observations.json> [inputs...]` to validate and concatenate observation documents. An empty input list produces an empty schema-version-1 document.
-- Use `synthesize-rules --output <rules.json> <observations...>` to deduplicate observations and deterministically synthesize generalized rules from compatible pairs. A lone observation does not produce a rule; a repeated identical observation can.
-- Use `pretty-print-rules --output <rules.md> <rules.json>` for a reviewable Markdown rendering. Keep JSON as the machine-readable source of truth.
+- `make-skeleton --output <records.json> [--rules <rules.json>] <analysis-project>` compiles the library and emits schema-version-1 records with baseline and applied views. The optional rule document is parsed strictly, including `rules` and `printf_rules`.
+- `validate --input <request.json> --output <response.json>` structurally checks returned Rust and emits `valid`, `invalid`, or `setup_error`; it does not build a project.
+- `normalize-safety --output <normalized.rs> <input.rs>` makes source-defined free functions except `main` unsafe. Run it after skeleton generation on the analysis source, before assembling target functions.
+- `make-initial --output <initial.rs> <analysis-project>` creates the partial target: it retains non-function context, replaces source-defined function items with same-name, zero-argument pending stubs, and omits `main`. Build this initial library before adding functions.
+- `add-functions --request <request.json> --current-project <partial-project> --output <candidate.rs> --statement-pairs-output <pairs.json> --observation-source-output <observation.rs> --observation-metadata-output <metadata.json> <analysis-project>` compiles the complete analysis source, adds an SCC's accepted functions to the partial target, and publishes candidate plus sidecars together. Outputs must be distinct and outside both input projects.
+- `finalize-project --manifest <proctor.toml> --current-project <partial-project> --output <final.rs> --manifest-output <final-proctor.toml> <analysis-project>` restores `main` after function acceptance, including the supported two-argument `main_0` boundary. The input manifest must declare `target_kind`, `target_name`, `api_functions`, and an empty `wrappers` array; the output manifest preserves its contents. Build the finalized project.
+- `extract-observations --metadata <metadata.json> --output <observations.json> <observation.rs>` compiles the synthetic observation source and recovers typed expression regions after candidate acceptance.
+- `merge-observations --output <observations.json> [inputs...]` validates and concatenates observation documents; no inputs produce an empty schema-version-1 document. `synthesize-rules --output <rules.json> <observations...>` deduplicates observations and synthesizes rules from compatible pairs; a lone observation does not produce a rule, but a repeated identical one can. `pretty-print-rules --output <rules.md> <rules.json>` renders rules for review.
 
 ## Skeleton generation
 
 - Use `crates/tools/src/skeleton.rs` for deterministic `ItemRecord` generation. Include source-defined free functions except `main`, plus contextual statics, constants, type aliases, enums, structs, and unions; omit modules, uses, foreign items, and other unsupported item kinds as records.
 - Preserve recursive inline-module source order and assign numeric IDs from that order. Use crate-relative paths to distinguish identical final names.
-- For functions, emit `annotated_source`, source/target signatures, direct and signature dependencies, resolved foreign function names, and `baseline`/`applied` `SkeletonView` values.
+- For functions, emit `annotated_source`, source/target signatures, direct and signature dependencies, resolved foreign function and static names, and `baseline`/`applied` `SkeletonView` values.
 - Keep each view self-contained: include its skeleton, `needs_transformation`, recursive statement dispositions (`preserve`, `preserve_shell`, `transform`, `rule_applied`, or `mechanical`), and statement-pair metadata for reportable transform/mechanical labels.
 - Sanitize prompt-facing ABI and `no_mangle`, display non-`ref` bindings as mutable, label source statements, and make the target skeleton unsafe.
 - Preserve statements whose compiler-resolved types and expressions remain valid. Replace required payloads with parseable placeholders; in the applied view, replace a transform region only when one rule covers every selected expression in that region and the result passes structural checks.
@@ -67,28 +44,26 @@
 - Distinguish malformed requests or inconsistent expected skeletons as `setup_error`; report LLM-transformable failures as `invalid`.
 - Keep shared label-tree validation and canonical restoration in `crates/tools/src/preservation.rs`. The replacer must restore preserved groups independently instead of trusting that validation already ran.
 
-## Item replacement
+## Additive function assembly
 
-- Use `crates/tools/src/item_replacer.rs` to resolve targets by full crate-relative path against the current HIR-mapped surface AST.
-- Compose the accepted target lifetime declaration, signature, and body with the current function's visibility and metadata; remove PROCTOR labels before emitting source.
-- When parameter or return types change, keep the transformed implementation at its original path, create a collision-free sibling compatibility wrapper, and redirect untransformed external callers through compiler-resolved call sites.
-- Keep calls within the current SCC direct. Reject required rewrites hidden in macro token input.
-- Preserve export behavior by moving `no_mangle`/`export_name` responsibility to a generated wrapper when required.
-- Handle the special two-argument `main_0` boundary mechanically instead of generating a normal compatibility wrapper.
-- Limit wrapper conversions to the explicit raw-pointer/reference/slice/box cases implemented by `input_conversion` and `output_conversion`; return `UnsupportedConversion` for other pairs.
+- Use `crates/tools/src/item_replacer.rs` for `make_initial_source`, `add_functions_with_observations`, and `finalize_additive_source`.
+- Keep the complete analysis project separate from the partial target. `add_functions_with_observations` requires matching non-function context, resolves requested functions by full crate-relative path, composes each accepted signature and body with current metadata, and replaces its pending stub at the original path.
+- Pass prior accepted correspondence in the schema-version-1 request. Additive correspondence keeps logical and implementation paths equal and `wrapper_path` absent; signature changes do not create persistent compatibility wrappers. The partial candidate receives no generated source copies.
+- For observation extraction, synthesize labeled implementations and copies of the original functions; rewrite compiler-resolved calls to those copies. Add temporary source stubs only where earlier accepted signature changes require them. Reject required rewrites hidden in macro token input.
+- Finalization restores `main` from the analysis source, or creates the fixed `main` boundary for supported two-argument `main_0`. Validate the manifest target/API names and keep its `wrappers` array empty; finalization does not check exported signature compatibility.
 
 ## Observation and rule mechanics
 
 - Use `crates/tools/src/observation.rs` for replacement metadata, callable correspondence, typed expression extraction, pointer anchors, semantic identities, source-region selection, and canonical observation documents.
-- Keep extraction downstream of successful candidate compilation. Validate sidecar digests and accepted/current item correspondence before trusting the synthetic observation source.
-- Use `crates/tools/src/rule.rs` for strict schema-version-1 observation/rule documents, deterministic merging and synthesis, rule matching, specificity, substitution cost, and semantic canonicalization; use `rule/markdown.rs` only for presentation. Keep the ordinary `observations`/`rules` and format-specific `printf_observations`/`printf_rules` arrays present and distinct.
+- Keep extraction downstream of successful candidate compilation. Validate sidecar digests and accepted/current item correspondence before trusting the synthetic observation source. Additive replacement metadata uses schema version 2 and records any temporary source stubs.
+- Use `crates/tools/src/rule.rs` for strict schema-version-1 observation/rule documents, deterministic merging and synthesis, rule matching, specificity, substitution cost, and semantic canonicalization. Keep resolved `scanf`/`fscanf`/`sscanf` and `xj_scanf` format literals rigid during synthesis; use `rule/markdown.rs` only for presentation. Keep the ordinary `observations`/`rules` and format-specific `printf_observations`/`printf_rules` arrays present and distinct.
 - Keep rule application inside skeleton generation. A rule-applied candidate remains provisional: PROCTOR may fall back from the applied view to the baseline view when the candidate does not compile.
 
 ## Focused verification
 
 - Run `cargo test -p tools skeleton::tests` for record, annotation, target-type, or preservation-classification changes.
 - Run `cargo test -p tools validator::tests` for validation or diagnostic changes.
-- Run `cargo test -p tools item_replacer::tests` for normalization, replacement, wrappers, conversions, or call rewriting.
+- Run `cargo test -p tools item_replacer::tests` for initial-source construction, additive assembly, finalization, or call rewriting.
 - Run `cargo test -p tools printf::tests` for `printf` recognition, format conversion, or print-template validation.
 - Run `cargo test -p tools observation::tests` for observation source, metadata, correspondence, region selection, or extraction changes.
 - Run `cargo test -p tools rule::tests` for document validation, synthesis, matching, ordering, or Markdown changes.

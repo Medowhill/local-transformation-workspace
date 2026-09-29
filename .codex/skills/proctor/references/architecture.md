@@ -49,7 +49,7 @@ Use these four framework artifact kinds:
 Keep `proctor.toml` separate from the JSON stage envelope:
 
 - The envelope connects the orchestrator to one stage invocation.
-- `proctor.toml` travels inside a Rust project and records target identity, public API functions, and wrapper relationships for downstream transformations.
+- `proctor.toml` travels inside a Rust project and records target identity and public API functions. Its wrapper field remains in the model, but the current local-transformation stage requires an empty list.
 
 ## Package ownership
 

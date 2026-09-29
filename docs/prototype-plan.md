@@ -200,3 +200,14 @@ generic dependency publication.
 
 - [Detailed Amendment 9 plan](amendment-9-plan.md)
 - [Amendment 9 test plan](amendment-9-test-plan.md)
+
+## Amendment 10
+
+Amendment 10 plans additive local transformation: compile a function-free
+library, then accepted leaf-first SCCs, without callers or wrappers in the
+target. Scratch source supports typed observations. Finalization restores
+`main`, adds changed library API wrappers with the existing generator, and
+runs a full build. Behavioral tests and repair remain deferred.
+
+- [Detailed Amendment 10 plan](amendment-10-plan.md)
+- [Amendment 10 test plan](amendment-10-test-plan.md)

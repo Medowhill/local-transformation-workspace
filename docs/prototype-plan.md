@@ -222,3 +222,14 @@ local transformation; changed slice APIs therefore do not preserve the C ABI.
 
 - [Detailed Amendment 11 plan](amendment-11-plan.md)
 - [Amendment 11 test plan](amendment-11-test-plan.md)
+
+## Amendment 12
+
+Amendment 12 plans temporary declarations for pending non-`main` functions
+at their original module paths, so retained imports can resolve during the
+initial library build. Each SCC replaces its declarations with accepted
+functions in the candidate and observation source. Existing build acceptance
+and `main` finalization remain; retained imports of `main` remain unsupported.
+
+- [Detailed Amendment 12 plan](amendment-12-plan.md)
+- [Amendment 12 test plan](amendment-12-test-plan.md)

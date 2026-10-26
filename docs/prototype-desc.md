@@ -284,8 +284,8 @@ remains authoritative for name resolution and type correctness.
 
 ## Statement labels, preservation, and holes
 
-Source and target statements receive matching depth-first numeric
-`#[proctor(N)]` labels. A statement disposition is one of:
+Source and target statements outside closure bodies receive matching
+depth-first numeric `#[proctor(N)]` labels. A statement disposition is one of:
 
 - `preserve`, meaning Crat has proved that the complete statement subtree
   remains valid under the selected target types;
@@ -325,12 +325,19 @@ contain exactly one tail expression, and any nested control must recursively
 have the same conditional form. Such an expression is opaque to internal
 labeling and remains part of its enclosing statement region.
 
+Closure expressions are also opaque to statement alignment. Their parameters,
+body statements, and internal control flow are rewritten with the enclosing
+region, without independent labels or target local-binding types. Closure-local
+binding names may change; compiler analysis still inspects dependencies and
+captured outer bindings.
+
 Direct skeleton generation still fails atomically for unsupported shapes such
-as empty statements, function-local items, non-block match arms, invalid nested
-control, an AST/HIR mapping mismatch, or an unspellable synthesized type. In
-the checked-in local pipeline, the earlier ordinary preparation pass removes
-function-local statics and non-block match arms before this defensive boundary;
-other function-local items remain unsupported.
+as empty statements and non-block match arms outside closure bodies,
+function-local items, invalid nested control, an AST/HIR mapping mismatch, or
+an unspellable synthesized type. In the checked-in local pipeline, the earlier
+ordinary preparation pass removes function-local statics and non-block match
+arms before this defensive boundary; other function-local items remain
+unsupported.
 
 ## Structural validation
 
@@ -342,7 +349,7 @@ It enforces:
 - parameter count, names, and structural types;
 - return-type presence and structural type;
 - existing binding identity, pattern role, `ref` mode, and explicit local
-  types;
+  types outside closure expressions;
 - label order, placement, grouping, and nested control structure;
 - canonical fully preserved regions and preserved statement shells;
 - exact control roles, branch and arm structure, guards, and descendant
@@ -350,8 +357,9 @@ It enforces:
 - lexical locality of generated temporaries.
 
 One labeled statement may expand to several consecutive statements. New
-bindings must use a fresh `proctor_temp_var_<n>` name and remain inside their
-expansion group.
+bindings outside closure expressions must use a fresh `proctor_temp_var_<n>`
+name and remain inside their expansion group, including when captured by a
+closure.
 
 Returned functions may not introduce function-local items, explicit unsafe
 blocks, unexpected statement or expression attributes, malformed labels, or
@@ -578,7 +586,7 @@ literals retain their ordinary generalization behavior.
 ## Supportedness and further reading
 
 The prototype intentionally supports a restricted Rust input model. Important
-excluded constructs include methods and traits, closures, source-written
+excluded constructs include methods and traits, source-written
 type/const generics, function pointers and callbacks, remaining function-local
 items after static lifting, explicit unsafe blocks outside the managed
 executable boundary, and pointer transformations that require changing named

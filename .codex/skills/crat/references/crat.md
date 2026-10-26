@@ -8,14 +8,19 @@
 - Data-representation passes
 - Library and cleanup passes
 - Standalone analyses
+- Finder and merge tools
 
 ## Entrypoint and compiler utilities
 
 - Start with `src/bin/crat.rs` when changing pass order, CLI/config wiring, project copying, dependency changes, or output behavior.
+- All paths and commands in this reference are relative to the Crat root, `proctor/stages/crat/` in the workspace. `rust-toolchain.toml` pins `nightly-2025-06-23` with rustc development components; use that toolchain for compiler-private APIs.
+- Ownership analysis also requires native Z3 development dependencies (`libz3-dev` on Ubuntu/Debian); check `README.md` and `crates/pointer_replacer/Cargo.toml` for setup.
 - Expect transformation passes `Expand`, `Preprocess`, `Prepare`, `Extern`, `Unsafe`, `Unexpand`, `Split`, `Bin`, `Check`, `Format`, `Interface`, `Libc`, `OutParam`, `Lock`, `Union`, `Punning`, `Enum`, `Io`, `Pointer`, `Static`, and `Simpl`; expect standalone analyses `Andersen` and `OutParam`.
 - The CLI locates the crate library, optionally copies the input project, and invokes most operations through `utils::compilation::run_compiler_on_path`.
+- TOML configuration supplies pass-specific defaults; CLI pass lists extend configured lists, boolean options enable configured flags, and supplied scalar options override them. Passes run in the requested order. Choose either transformation passes or one standalone analysis, never both.
 - Keep dependency side effects at the CLI/publication boundary. Pass results currently request `bytemuck`, `num-traits`, `tempfile`, or `proctor-libc` as needed.
 - Propagate `c_exposed_fns` through interface, unsafe, pointer, Andersen, outparam, and punning configs. Use `points_to_file` to connect Andersen output to union and outparam logic.
+- Compiler helpers resolve extern crates from `deps_crate/target/<host>/debug/deps`, rather than the input project's Cargo build. Build `deps_crate` with an explicit host target before compiler-backed tests or analyses, as in `.github/workflows/ci.yml`; use `DIR=<Crat-root>` when invoking helpers away from their supported working directories. Do not assume building the main workspace prepares this excluded crate.
 
 Use these common rustc patterns:
 
@@ -34,6 +39,7 @@ Use these common rustc patterns:
 - Goal: normalize a translated crate into one expanded file with required feature and allow attributes.
 - File/entry: `crates/passes/src/expander.rs`; `expander::expand(Config { keep_allows }, tcx) -> String`.
 - Steal the lowering resolver AST, clear crate attributes, insert Crat's features, rename a module named `mod` to `rmod`, rewrite selected expanded paths, remove `bitfield` field attributes, and print the crate.
+- The CLI removes superseded Rust source files while retaining explicitly declared in-project Cargo binary paths.
 
 ### Preprocess
 
@@ -94,6 +100,7 @@ Use these common rustc patterns:
 - File/entry: `crates/passes/src/interface_fixer.rs`; `fix_interfaces(&Config, tcx) -> String`.
 - Rename the implementation to `<name>_internal`, generate the raw-pointer wrapper at the exposed name, and rewrite Rust paths and calls to the implementation.
 - Convert null pointers to empty slices/cursors and nonnull pointers with the provisional `1_000_000` bound.
+- Consume `field_spec_map.json` from pointer struct-parameter specialization to recover C-facing field wrappers, leaving the specialized implementation in place. This wrapper pass is separate from `crat-tool` finalization, which creates no general API wrappers.
 
 ## Data-representation passes
 
@@ -165,6 +172,11 @@ Use these common rustc patterns:
 - Use `outparam_replacer::ai::analysis::analyze` to run the standalone output-parameter analysis and `write_analysis_result` to emit JSON.
 - Expect Andersen points-to data, alias checks, call-graph SCC summaries, loop widening/state caps, return ranges, and MIR abstract values.
 - Important config: `max_loop_head_states`, `check_global_alias`, `check_param_alias`, `no_widening`, `points_to_file`, and debug timing/printing options.
+
+## Finder and merge tools
+
+- `src/bin/crat-finder.rs` dispatches the `Example`, `Macro`, `Mapper`, `Mir`, `Unsafe`, and `Void` inspectors in `crates/finders/`. Use them for compiler structure or unsafe-operation inspection; `Void` emits JSON findings.
+- `src/bin/crat-merge.rs` calls `crates/merger/src/lib.rs` to merge variants listed in `translations.json`. The merger checks shared Cargo/build/toolchain files and combines Rust items under configuration-derived features. It writes a project and is independent of local SCC assembly.
 
 ## Focused verification
 

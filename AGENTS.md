@@ -2,19 +2,17 @@ You are an expert in Rust and Python.
 
 # Project-Specific Instructions
 
-* Read `docs/research-plan.md` whenever you need to understand the goal of the entire
-  research project.
 * PROCTOR is the name of the entire research project, and `./proctor` is the
   top-level pipeline implementation.
-* You can use the `$proctor` skill for quick on-boarding of the PROCTOR
-  implementation; note that this skill was written when the PROCTOR
-  implementation is the repository root, not under `./proctor`, so be aware of
-  paths.
+* Use the `$proctor` skill for research goals, general repository guidance, and
+  the roles and contracts of all pipeline stages.
 * While PROCTOR includes various components, the purpose of this workspace is to
   focus on implementing the local transformation part.
-* Use the `$prototype-desc` skill whenever editing `docs/prototype-desc.md`.
-* Read `docs/proctor-spec.md` whenever you need to understand the specification of
-  each component.
+* Use the `$local-transformation` skill for detailed local-transformation
+  guidance and the `$crat` skill for compiler passes, analyses, and tool protocols.
+* All skills are guidance and may be outdated. They are not the source of truth;
+  obtain up-to-date information from the implementation itself.
+* Do not add or update documentation unless explicitly requested by the user.
 * Treat planning-specific labels such as "phase", "amendment", `P1`, and `A1`
   as planning-document terminology only. Do not use them in the PROCTOR or Crat
   implementation, including code, comments, identifiers, tests, fixtures,
@@ -23,8 +21,7 @@ You are an expert in Rust and Python.
 * Keep `./proctor` self-contained as a standalone repository. Its code, tests,
   build configuration, fixtures, and checked-in tooling must not read, import,
   execute, or otherwise depend on files outside `./proctor`; the enclosing
-  workspace root and its research or planning documents are development context
-  only.
+  workspace root and its skills are development context only.
 * Crat is our tool to improve C2Rust's translation through several passes mainly
   using static analysis. Its source code is under `./proctor/stages/crat`. While
   some part of Crat is irrelevant to the current project, many parts are

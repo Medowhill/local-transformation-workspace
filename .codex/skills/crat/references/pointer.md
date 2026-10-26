@@ -12,10 +12,12 @@
 
 - Run pointer stages from `Pass::Pointer` in this order:
   1. `rewrite_struct_arrays`
-  2. `rewrite_epoch_split`
-  3. `rewrite_array_local_provenance`
-  4. `replace_local_borrows`
+  2. `rewrite_struct_param_fields`
+  3. `rewrite_epoch_split`
+  4. `rewrite_array_local_provenance`
+  5. `replace_local_borrows`
 - Recompile between changed preprocessing stages because each returns rewritten source plus a `changed` flag.
+- Struct-parameter field specialization also returns interface records. The CLI preserves a nonempty `field_spec_map.json` for the `Interface` pass; a later no-op pointer rerun must not erase it.
 - Use default `PointerDecisionOptions`, including offset-sign analysis. Select `SliceCursor` or `SliceCursorMut` when potentially negative offsets require position tracking.
 - Expect `replace_local_borrows(&Config, tcx) -> (String, BytemuckDependency)`. Handle `None`, `Runtime`, and `Derive` in the CLI.
 - Rewrite signatures, locals, fields, assignments, calls, returns, dereferences, null checks, offsets, allocations, and frees; allow rewrite-time safety checks to retain or demote unsupported cases to raw pointers.
@@ -27,7 +29,8 @@
 - Call `initial_pointer_decisions(&Config::default(), PointerDecisionOptions { assume_nonnegative_offsets: true }, tcx)` from skeleton generation.
 - Reuse the ordinary analysis and decision machinery; do not duplicate pointer inference in `crates/tools`.
 - Treat the returned `InitialPointerDecisions { signatures, bindings }` as fixed target types for function signatures and local bindings.
-- Do not run the pointer preprocessing stages, expression rewriter, rewrite-time demotion, dependency insertion, or slice-cursor module generation while building skeletons.
+- In `crates/tools/src/skeleton.rs`, `apply_target_signature`, `target_type`, and `Skeletonizer` render those decisions through scope-aware `TypeSpeller`. Preserve resolved type identity and report required unspellable types as `TypeSpelling` errors.
+- Do not run the pointer preprocessing stages, expression rewriter, rewrite-time demotion, dependency insertion, or slice-cursor module generation while building skeletons. Freeze the resulting target signatures once for independent SCC workers.
 - Assume upstream non-local transformation removed actual negative offsets. With the tools-only option, offset-sign facts are empty and skeleton decisions do not select slice cursors for negative-offset handling.
 - Keep the two-argument `main_0` `argv: &mut [&mut [i8]]` override in skeleton generation; it takes precedence over the ordinary pointer decision for that parameter.
 

@@ -1,193 +1,195 @@
 # Contracts and stages
 
-## Contents
+All implementation paths are relative to the PROCTOR root (`./proctor/`).
+Read a stage's entrypoint, config validator, and focused tests before changing
+its behavior; `stage.toml` config descriptions are not exhaustive validation.
 
-- Contract files
-- `stage.toml`
-- Input and output envelopes
-- Project manifest
-- Status semantics
-- Current stage implementations
-- Stage-change checklist
+## Shared contracts
 
-## Contract files
+The public framework boundary consists of:
 
-Treat these files as one public surface:
+- `proctor/contracts/stage_io.py` and its
+  `proctor/contracts/schemas/stage_input.v1.json` /
+  `proctor/contracts/schemas/stage_output.v1.json`;
+- `proctor/contracts/stage_manifest.py` for `stage.toml`;
+- `proctor/contracts/manifest.py` for Rust-project `proctor.toml`;
+- `docs/stage-contract.md` and `docs/writing-a-stage.md` as contributor guides;
+- `tests/test_stage_io.py`, `test_schemas.py`, `test_manifest.py`, and
+  `test_validate.py` for serialization and compatibility behavior.
 
-- `docs/stage-contract.md`: authoritative contributor-facing behavior
-- `proctor/contracts/stage_io.py`: Python dataclasses and validation
-- `proctor/contracts/schemas/stage_input.v1.json`
-- `proctor/contracts/schemas/stage_output.v1.json`
-- `proctor/contracts/stage_manifest.py`: `stage.toml`
-- `proctor/contracts/manifest.py`: Rust-project `proctor.toml`
-- `tests/test_stage_io.py`, `tests/test_schemas.py`, `tests/test_validate.py`
+Envelopes retain schema version 1. Readers ignore unknown additive fields and
+reject newer versions; update models, serializers, schemas, consumers, and
+tests together when changing a public shape. Independently maintained stage
+submodules may have their own envelope models; include those in integration
+checks rather than assuming they import the framework model.
 
-Keep the code serializers and JSON Schemas synchronized. Version 1 allows additive unknown fields. Reject a newer version; bump only for breaking changes.
+### Stage manifests
 
-## `stage.toml`
+Each stage root declares `id`, `version`, nonempty `exec`, optional `warmup`,
+`requires`, `produces`, and optional config documentation. Requirements are
+`required`, `optional`, or `unused`; an omitted requirement is unused. The
+framework tracks `c_project`, `rust_project`, `test_package`, and `rule_set`;
+only `rust_project` and `rule_set` can currently be produced.
 
-Require each stage root to contain:
+A config's stage id identifies that invocation. It may differ from the
+manifest id with a preflight warning, permitting the test-infrastructure
+checkout to serve both generation and later validation. Paths in `uses` are
+resolved from the configured PROCTOR root. Stage-specific config is opaque to
+the orchestrator, so its owning implementation determines accepted keys,
+defaults, and failure behavior.
 
-```toml
-id = "my_stage"
-version = "0.1.0"
-description = "..."
-exec = ["python3", "main.py"]
-warmup = ["python3", "main.py", "--build-only"] # optional
+### Input and output envelopes
 
-[requires]
-c_project = "optional"      # required | optional | unused
-rust_project = "required"
-test_package = "required"
-rule_set = "unused"
-
-[produces]
-rust_project = true
-rule_set = false
-
-[config]
-option = { type = "integer", default = 3, doc = "..." }
-```
-
-Use lowercase letters, digits, underscores, or hyphens for the manifest id. The config table documents settings but does not enforce them. Unlisted requirements default to `unused`.
-
-Only `rust_project` and `rule_set` are currently producible. Extend the manifest model, destination model, schemas, orchestrator state, validation, docs, and tests together before adding another producible kind.
-
-## Input envelope
-
-The orchestrator invokes:
+Invoke every stage as:
 
 ```text
 <exec...> --input /abs/stage_input.json --output /abs/stage_output.json
 ```
 
-Use these `StageInput` groups:
+`StageInput` carries identity (`run_id`, `stage_id`, index, optional item),
+read-only absolute artifact paths, output destinations, resolved stage config,
+and advisory framework settings (LLM defaults, usage log, prompts, workdir,
+timeout, budget). Cwd is the stage root for executables/resources, not a base
+for artifact paths.
 
-- Identity: `schema_version`, `run_id`, `stage_id`, `stage_index`, optional `item`
-- `inputs`: read-only absolute paths for all artifact kinds
-- `outputs`: destination paths for Rust, rule set, and extra artifacts
-- `config`: opaque resolved stage config
-- `framework`: advisory LLM settings, usage-log path, prompt-library path, scratch workdir, budget, timeout
+`StageOutput` reports `success`, `failure`, or `skipped`, outputs, config used,
+optional models/usage/prompts, a metrics object, artifact-relative logs, metadata,
+and error. Failure requires a nonempty error; other statuses require null
+error. Success must create declared artifacts and exit zero; omitted output
+paths fall back to the framework-assigned destinations. Skipped exits zero
+and forwards previous artifact state; it need not copy an output. Stages should
+emit a failure envelope on exceptions instead of leaving only a stack trace.
+The runner also treats timeouts, nonzero success exits, missing outputs, and
+invalid envelopes as failures.
 
-Do not resolve artifact paths against the stage working directory. The orchestrator sets cwd to the stage root only so relative executables and stage-local resources work.
+### Project and test metadata
 
-## Output envelope
+CRAT creates `proctor.toml` containing `target_kind` (`executable` or `library`),
+nonempty Cargo `target_name`, `api_functions`, and crate-relative wrapper
+relationships (`wrapped`, `wrapper`). Executables require an empty API list.
+The model can express wrappers even though the current local stage requires
+none. This is project compatibility metadata, not transformation correspondence.
 
-Use `StageOutput` to report:
+Test infrastructure stores strategy, `target_kind` (`bin` or `lib`), runner,
+and strategy metadata in `testinfra.toml`. Preserve that alongside the project
+when composing stages that reuse its oracle. The framework test-package
+contract is separately `run_test.sh <test_data-dir> <compiled-artifact>`, from
+any cwd, with exit zero for success. Do not substitute one contract for another.
 
-- `status`: `success`, `failure`, or `skipped`
-- matching `stage_id` and optional stage version
-- actual output paths on success
-- `config_used`
-- LLM models, aggregate usage, and prompt ids/versions when applicable
-- flat metrics, artifact-relative logs, free-form metadata
-- error text only on failure
+## Stage implementations
 
-The framework accepts missing optional fields, but a well-behaved stage should report reproducibility fields honestly. Always write an envelope even after caught exceptions. Return nonzero for failure; return zero for success or skip.
+### C2Rust translation
 
-## Status semantics
+- **Purpose and artifacts:** `stages/c2rust-adapter/main.py` consumes a required
+  C project and produces a copied Cargo Rust project. It accepts a supported C
+  directory/tar layout, configures CMake, discovers target/API information, and
+  invokes `stages/c2rust` through a resolved transpiler.
+- **Controls and acceptance:** `preset` selects a CMake preset when present;
+  `check_build` defaults true. Link/build fixups, `config.toml` (including
+  exposed functions and optional binary identity), and `libs.json` accompany
+  output. The intermediate remains library-shaped until later CRAT conversion.
+- **Ownership and checks:** CMake/tool invocation and output normalization
+  belong to the adapter; transpiler internals belong to the submodule. Use
+  `tests/test_c2rust_adapter.py` and translation smoke E2E for the handoff.
 
-Use exact meanings:
+### CRAT symbolic transformation
 
-- `success`: create every declared output and let the orchestrator update artifact state.
-- `skipped`: create no output; let the orchestrator forward the prior state.
-- `failure`: provide a nonempty `error`; do not claim a usable output.
+- **Purpose and artifacts:** `stages/crat-adapter/main.py` consumes Rust with
+  C2Rust's `config.toml`, runs Crat passes in separate scratch outputs, and
+  produces a Cargo project with newly emitted `proctor.toml` and empty wrappers.
+- **Controls and acceptance:** choose `final_pass` for the canonical predecessor
+  chain or an exact `passes` list; they are mutually exclusive. `pass_args`
+  replaces each selected pass's default arguments. `prepare` is an explicit
+  alternative used in local-stage configs, not part of every default chain.
+  `check_build` defaults true.
+- **Ownership and checks:** build/cache/environment/pass composition belong to
+  the adapter; analyses and rewrites belong to Crat. Use
+  `tests/test_crat_adapter.py`, CRAT/translation smoke E2E, and `$crat` for
+  compiler changes.
 
-The orchestrator rejects a declared Rust output that is not a directory and a declared rule set that is not a file. A nonzero process exit overrides a reported success/skip. A missing or malformed output is a contract failure.
+### Test generation and validation
 
-With `[run] on_stage_failure = "continue"`, later stages run using the most recent valid state. Do not assume a failed transformer partially updates state.
-
-## Project manifest
-
-Read `proctor.toml` inside Rust projects after the Translation component:
-
-```toml
-target_kind = "library" # or "executable"
-target_name = "example"
-api_functions = ["foo"]
-wrappers = []
-```
-
-Enforce:
-
-- Executables have no `api_functions`.
-- Library `api_functions` entries name intended public API functions. Finalization requires a matching original function name or `export_name`, but does not preserve its signature.
-- Wrapper paths are crate-relative full paths.
-- The current local-transformation stage rejects nonempty `wrappers`, keeps API declarations stable, and finalizes with an unchanged manifest. It does not create compatibility wrappers for changed signatures.
-- Copy the manifest with the project; stages that change its declarations must update it.
-
-CRAT emits the initial manifest with an empty wrapper list. C2Rust output carries `config.toml`, not `proctor.toml`.
-
-## Current stage implementations
-
-### C2Rust adapter
-
-Use `stages/c2rust-adapter/`, not the upstream submodule, for framework integration.
-
-The adapter:
-
-1. Accepts a TRACTOR project directory or tar archive, extracts archives into stage work, and finds one root containing `CMakeLists.txt`.
-2. Runs CMake file-api configuration and reads the codemodel.
-3. Discovers public library functions from project headers through libclang.
-4. Filters the compilation database to real executable/shared-library targets.
-5. Locates `c2rust-transpile` on PATH, in `PROCTOR_CACHE_DIR`, or builds the submodule.
-6. Transpiles and applies Cargo/link fixups.
-7. Writes CRAT `config.toml` and `libs.json`.
-8. Optionally runs `cargo build`.
-
-Its output is library-shaped even for eventual executables. Do not run executable test vectors until CRAT's `bin` pass.
-
-### CRAT adapter
-
-Use `stages/crat-adapter/` for framework integration. It builds the pinned rustc-private CRAT tool once per submodule commit, constructs its sysroot/Z3 environment, and either runs the cumulative chain ending at configurable `final_pass` (default `bin`) or the exact ordered `passes` list. Use `pass_args.<pass>` only for selected passes; do not configure `passes` and `final_pass` together.
-
-The default `final_pass` chain is:
-
-```text
-expand -> extern -> preprocess -> outparam -> punning -> enum ->
-pointer -> io -> libc -> static -> simpl -> interface -> unsafe ->
-unexpand -> split -> bin
-```
-
-`prepare` is selectable after `enum` in an explicit `passes` list and appears in `configs/c2rust_crat_local.toml`; it is not in the default chain.
-
-After copying the final pass output, emit `proctor.toml` from CRAT `config.toml` and Cargo metadata.
+- **Purpose and artifacts:** `stages/test-infrastructure/src/test_infrastructure/`
+  consumes Rust and optional C/tests, delivering an augmented Rust project with
+  harnesses, vectors, runner metadata, and evidence. It is an implemented stage,
+  not the unimplemented framework `make-tests` verb or a `test_package` producer.
+- **Controls and acceptance:** `testinfra-stage` dispatches `setup`, `run`
+  (default, no agent generation), `generate`, or `teardown`. Strategies are
+  `cando2` and `rstest`; generation uses a bounded coding-agent loop with tests,
+  optional coverage, and relocation checks. `generate` requires a model unless
+  the agent is fake. Generation may accept passing tests with partial coverage
+  after exhaustion; default `run` uses its convergence decision.
+- **Ownership and checks:** `stage.py`, `core/executor.py`, `core/loop.py`, and
+  strategy subpackages own config, acceptance, harness/vector completion, and
+  telemetry. Use its own `tests/test_infrastructure/` suite. For a preserved
+  final oracle, configs use `command = "run"`, `complete_vectors = false`, and
+  disable coverage when it is unnecessary.
 
 ### Abstraction recovery
 
-Treat `stages/abstraction-recovery/` as a narrow live experiment, not a general abstraction-recovery implementation. It invokes the `claude` CLI directly to identify a small number of self-contained function-local manual dynamic arrays, rewrites them to `Vec` while preserving exact signatures and exported linkage, runs release Cargo builds, and performs bounded compiler-error repair.
+- **Purpose and artifacts:** `stages/abstraction-recovery/main.py` reads Rust
+  and `proctor.toml`, identifies collection-recovery candidates, copies the
+  project, and replaces manual C-style data structures with Rust abstractions.
+  Supported candidate kinds include sequences, maps/sets, heaps, and byte
+  buffers; inspect `common.py` and the selected backend for the current scope.
+- **Controls and acceptance:** backends are Claude Code (`claude`, default),
+  OpenCode (`opencode`), or direct OpenAI HTTP (`llm`). Candidate and repair
+  bounds apply; acceptance builds with Cargo, not the supplied test package.
+  No candidates or give-up normally skips; `on_give_up = "fail"` fails instead.
+  Optional quality refinement retains the last building candidate on failure.
+- **Ownership and checks:** shared orchestration, backend modules, and
+  `quality.py` own recovery and optional unsafety/idiomaticity feedback. Its
+  focused `test_main.py` and `test_llm_abstraction_recovery.py` exercise mocked
+  behavior. Backend telemetry is independent of `proctor.llm` usage logs.
 
-No candidates or exhausted repair reports `skipped` by default so the orchestrator forwards the input; `on_give_up = "fail"` makes exhaustion fatal. The stage does not consume test vectors, run the test package, use the shared `LlmClient`/per-attempt usage log, or broaden recovery beyond the current Vec case. It requires `claude` on PATH and `ANTHROPIC_API_KEY`. Do not infer the old scaffold behavior from `configs/full_pipeline.toml` or its E2E test.
+### Discipline repair
+
+- **Purpose and artifacts:** `stages/discipline-repair/src/dr_agent/` consumes
+  Rust and optional C/tests, copies it into an isolated workspace, instruments
+  violations, drives a bounded agent repair loop, and delivers Rust plus
+  evidence. `ptr-offset` is the default tool; `axm-violation` handles aliasing
+  XOR mutation violations. Recorded reports can replace instrumentation in tests.
+- **Controls and acceptance:** `dr-stage` validates `RunConfig`; `tools` selects
+  the sequential tool suite and `max_attempts_per_target` bounds abandonment.
+  Acceptance requires a build, no blocking test failure, an occurrence removed,
+  and no new occurrence. Missing oracle evidence is explicit unverified state;
+  leftover occurrences can yield successful partial repair with metrics.
+- **Ownership and checks:** `runner.py`, `loop.py`, `gate.py`, `testrunner.py`,
+  and `tools/` separate execution, assessment, testinfra oracle integration, and
+  analyzers. Rejected edits revert when checkpoints are available. Use its own
+  `tests/dr_agent/` suite, especially stage/loop/gate/tool tests.
 
 ### Local transformation
 
-Use `stages/local-transformation/` for the implemented local pointer-transformation prototype. It requires a Rust project, optionally consumes a rule set, and produces only a Rust project through the stage contract.
+- **Purpose and artifacts:** `stages/local-transformation/` consumes Rust and
+  an optional read-only rule set. It freezes whole-program analysis and target
+  interfaces, transforms SCCs concurrently, then produces Rust and observation,
+  alignment, and statistics artifacts. It does not produce an updated rule set.
+- **Controls and acceptance:** a positive `workers` count bounds private SCC
+  workers; `crat_dir` selects the tool checkout and `dump_llm_exchanges` enables
+  prompt/response artifacts. LLM output is structurally checked; SCC candidates
+  build privately before final assembly and a full build. Applied rules have
+  baseline fallback. The stage requires empty manifest wrappers and does not
+  run the behavioral oracle internally.
+- **Ownership and checks:** Python owns orchestration, prompts, builds, usage,
+  and publication; Crat owns compiler analysis, replacement, validation, and
+  rule mechanics. Use `tests/test_local_transformation.py`, the
+  `$local-transformation` skill for details, and `$crat` at the Rust boundary.
 
-The stage:
+### Example stages
 
-1. Copies the input to a complete analysis project, adds or raises crates.io requirements for `bytemuck`, `xj_scanf`, and `proctor-libc` while preserving non-registry dependencies, prepares it with Crat, generates dual baseline/rule-applied skeleton views, and normalizes function safety. `crat-tool make-initial` creates a separate partial target library with pending function stubs; it must pass `cargo build --lib`.
-2. Schedules functions by leaf-first call-graph SCCs. It starts from rule-applied skeletons, skips the LLM when rules and/or mechanical conversions leave no transform region in the SCC, and otherwise asks the LLM only for remaining regions. Crat lowers eligible literal `printf` calls to trusted `::std::print!` templates; zero-argument templates are mechanical and value arguments may be learned or filled.
-3. Structurally validates LLM output, asks `crat-tool add-functions` to add each SCC to the partial target, and installs each candidate transactionally around `cargo build --lib`. A rule-involved compile failure retries from the baseline view for the entire SCC.
-4. Extracts typed observations only after accepted builds and carries accepted function correspondence into later SCC additions.
-5. Uses `crat-tool finalize-project` to restore excluded `main` functions and validate API declarations, then installs final source and manifest transactionally for a full Cargo build. Publishes `statement-pairs.md`, merged `observations.json` (including the required `printf_observations` array), and `statistics.json` with the transformed project. Optional LLM exchanges are diagnostic artifacts.
+`stages/example-stage/` is a framework-independent copy-through template.
+`stages/example-llm-stage/` demonstrates the shared LLM client, prompt library,
+usage tracker while adding translation notes. Both
+consume and produce Rust projects; their manifests and tests provide focused
+starting points for a new stage rather than production translation behavior.
 
-Keep accepted function correspondence in stage state and leave the published `proctor.toml` text unchanged. Do not treat `observations.json` as a rule set. Synthesize and review rules separately with `crat-tool synthesize-rules` and `pretty-print-rules`, then provide the JSON rule document to a later run. The stage does not consume a test package or run tests itself; use the orchestrator's global gate when a suitable test package is available.
+## Change a stage or contract
 
-### Examples and fakes
-
-- Copy `stages/example-stage/` for a framework-free Python stage.
-- Copy patterns from `stages/example-llm-stage/` for typed envelopes, prompts, LLM calls, pricing, and usage tracking.
-- Use `tests/fake_stages/fake/` to test sequencing, failure, skip, timeout, malformed output, and checkpoint behavior.
-
-## Stage-change checklist
-
-1. Update `stage.toml` requirements/products accurately.
-2. Keep input trees immutable and refuse accidental destination overwrite.
-3. Put scratch/build intermediates in `framework.workdir`; put persistent reports under `artifacts_dir`.
-4. Validate the output Cargo project and test it when a package is provided.
-5. Remove bulky build targets before copying/finalizing when appropriate.
-6. Preserve or update `proctor.toml`.
-7. Record stage-specific metrics and log names.
-8. Track every LLM attempt and return aggregate usage/models/prompts.
-9. Add direct stage tests and pipeline wiring tests.
-10. Run `proctor validate` before an expensive end-to-end invocation.
+Keep inputs read-only, use declared outputs/scratch destinations, preserve
+project/test metadata as required by the affected stage, and report honest
+validation and telemetry. For public contract changes, coordinate framework
+models/schemas, independently maintained envelope models, manifests, adapters,
+and conformance tests. An extension to producible artifact kinds also changes
+destinations, orchestrator state threading, and preflight validation. Keep
+code/test tooling inside the standalone PROCTOR tree.

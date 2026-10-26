@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Transformation"
+  short_description: "Guide to the PROCTOR local-transformation stage"
+  default_prompt: "Use $local-transformation to understand or modify the PROCTOR local-transformation stage."

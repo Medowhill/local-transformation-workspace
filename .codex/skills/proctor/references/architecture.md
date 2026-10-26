@@ -1,149 +1,116 @@
 # Architecture and ownership
 
-## Contents
+All implementation paths in this reference are relative to the PROCTOR root
+(`./proctor/` in the enclosing workspace).
 
-- Purpose and current pipeline
-- Artifact flow
-- Package ownership
-- Run lifecycle
-- Source-of-truth hierarchy
-- Architectural invariants
+## Pipeline and artifact flow
 
-## Purpose and current pipeline
+PROCTOR combines symbolic analysis and neural rewriting to turn TRACTOR-format
+C projects into safer, more idiomatic Rust. It provides reproducible runs,
+file-based stage composition, shared LLM utilities, and evaluation tooling.
+The transformation and test stages remain independently executable.
 
-Treat Proctor as shared infrastructure for experiments that turn a TRACTOR-format C project into progressively safer Rust. The framework supplies orchestration, reproducibility, a vendor-neutral LLM client, usage accounting, prompt management, Rust context retrieval, and test-package execution. Each transformation stage remains an independently executable program and may use none of the shared libraries.
-
-The checked-in configs expose a translation core and two experimental branches:
+The checked-in compositions support this sequence:
 
 ```text
-C project or tar archive
-        |
-        v
-c2rust-adapter -> unsafe Rust + config.toml
-        |
-        v
-crat-adapter   -> symbolic pass chain + proctor.toml
-        |\
-        | +-> abstraction-recovery -> narrow Claude-driven Vec recovery
-        |
-        +----> local-transformation -> pointer-directed local rewriting
+C project -> c2rust-adapter -> crat-adapter
+                                  |
+                     test-infrastructure (generate)
+                                  |
+                       abstraction-recovery
+                                  |
+                         discipline-repair
+                                  |
+                       local-transformation
+                                  |
+                     test-infrastructure (run)
 ```
 
-Use `configs/c2rust_crat.toml` for the translation core, `configs/c2rust_crat_absrec.toml` for the live abstraction-recovery experiment, and `configs/c2rust_crat_local.toml` for the local-transformation prototype. The older `configs/full_pipeline.toml` comments and `tests/e2e/test_full_pipeline.py` still assume abstraction recovery is a no-op scaffold; do not use them as evidence of current stage behavior. Discipline repair remains a design item and has no stage implementation.
+This is a composition, not a hard-coded runner sequence. Configs can use the
+translation core, individual branches, or subsets. Test generation, abstraction
+recovery, discipline repair, and local transformation all have implementations;
+older scaffold comments do not describe their present status. See
+[contracts-and-stages.md](contracts-and-stages.md) for comparable stage details.
 
-Although early plans describe one Translation component, the implementation exposes C2Rust and CRAT as two stages. CRAT completes the component by creating `proctor.toml`.
+The framework tracks four artifact kinds:
 
-## Artifact flow
-
-Use these four framework artifact kinds:
-
-| Kind | Meaning | Runner/stage behavior |
+| Kind | Meaning | Current framework flow |
 |---|---|---|
-| `c_project` | TRACTOR-format C project directory or adapter-supported tar archive | Normally supplied by the runner; never produced |
-| `rust_project` | Cargo project moving through transformations | May be supplied or produced |
-| `test_package` | Executable `run_test.sh` plus `test_data/` | Normally supplied; not currently producible |
-| `rule_set` | Opaque local-transformation rules file | May be supplied or produced by the framework contract; the current local stage only consumes it |
+| `c_project` | TRACTOR C directory; C2Rust also accepts supported tar archives | Supplied input |
+| `rust_project` | Cargo project carried between stages | Supplied or produced |
+| `test_package` | `run_test.sh` with `test_data/` for the framework test runner | Supplied input |
+| `rule_set` | Rules file opaque to the orchestrator | Supplied or producible by contract; current local stage consumes it only |
 
-`stage.toml` defines whether each kind is `required`, `optional`, or `unused`, and whether a stage produces a Rust project or rule set. `proctor validate` walks enabled stages in order and tracks availability.
-
-Keep `proctor.toml` separate from the JSON stage envelope:
-
-- The envelope connects the orchestrator to one stage invocation.
-- `proctor.toml` travels inside a Rust project and records target identity and public API functions. Its wrapper field remains in the model, but the current local-transformation stage requires an empty list.
+The test-infrastructure stage delivers its harness, vectors, and
+`testinfra.toml` inside `rust_project`; it does not produce a framework
+`test_package`. Raw corpus vectors are not a framework artifact kind.
 
 ## Package ownership
 
-Use this map to find the smallest owning surface:
-
-| Path | Ownership |
+| Path | Responsibility |
 |---|---|
-| `proctor/contracts/` | Stage envelopes, stage manifests, project manifest, artifact wrappers, JSON Schemas |
-| `proctor/config/` | TOML overlay loading, `--set`, typed config, stage resolution |
-| `proctor/orchestrator/run.py` | Run creation, input recording, artifact state, sequencing, gating, resume |
-| `proctor/orchestrator/invoke.py` | Stage command construction and process-group timeout |
-| `proctor/orchestrator/checkpoint.py` | Stage/config fingerprints and hash-chain checkpoints |
-| `proctor/orchestrator/validate.py` | Preflight artifact-wiring validation |
-| `proctor/orchestrator/bench.py` | Corpus discovery and parallel independent runs |
-| `proctor/orchestrator/events.py` | Append-only `events.jsonl` |
-| `proctor/orchestrator/record.py` | `run.json` provenance |
-| `proctor/cli.py` | CLI parsing and verb dispatch |
-| `proctor/llm/` | Request/response types, retry, rate limiting, truncation, providers |
-| `proctor/usage/` | Per-attempt JSONL, pricing, aggregation/rendering |
-| `proctor/prompts/` | Strict versioned Jinja templates and content hashes |
-| `proctor/context/` | Rust index cache, target resolution, retrieval strategies |
-| `crates/proctor-rust-index/` | `syn`-based Rust item/edge indexer |
-| `proctor/testing/runner.py` | Cargo build, artifact inference, test-package invocation |
-| `proctor/testing/vector_harness.py` | TRACTOR `runtests.rust` invocation and JUnit parsing |
-| `proctor/testing/vector_compare.py` | Final or per-stage vector verification over run outputs |
-| `stages/*-adapter/` | Envelope shims around pinned upstream tools |
-| `stages/abstraction-recovery/` | Direct Claude Code identification, localized Vec rewriting, compile repair, and fail-open policy |
-| `stages/local-transformation/` | SCC scheduling, prompt/repair loop, Crat tool protocol, transactional builds, observations, and statistics |
-| `stages/example-stage/` | Minimal framework-independent stage template |
-| `stages/example-llm-stage/` | Shared LLM/tracker/prompt integration example |
-| `tests/fake_stages/fake/` | Deterministic orchestration test double |
+| `proctor/contracts/` | Stage envelopes, schemas, stage manifests, project metadata |
+| `proctor/config/` | TOML overlays, typed config, stage/LLM resolution |
+| `proctor/cli.py` | CLI parsing and dispatch |
+| `proctor/orchestrator/run.py` | Recorded inputs, artifact state, sequencing, gating, resume |
+| `proctor/orchestrator/invoke.py` | Commands, per-stage environments, process-group timeouts |
+| `proctor/orchestrator/checkpoint.py` | Stage fingerprints and chained checkpoint keys |
+| `proctor/orchestrator/validate.py` | Preflight stage/artifact availability |
+| `proctor/orchestrator/bench.py` | Corpus discovery and parallel independent cases |
+| `proctor/orchestrator/events.py`, `record.py` | Events and provenance |
+| `proctor/llm/`, `proctor/usage/` | Shared providers, retries, request limiting, usage and prices |
+| `proctor/prompts/` | Strict Jinja templates, numeric versions, content hashes |
+| `proctor/context/`, `crates/proctor-rust-index/` | Syntactic Rust indexing/cache and retrieval |
+| `proctor/testing/runner.py` | Framework test-package builds and execution |
+| `proctor/testing/vector_harness.py`, `vector_compare.py` | TRACTOR harness invocation and stage comparison |
+| `proctor/testing/no_falco_bench.py`, `suite_report.py` | No-Falco harness verification, regression gating, scorecards |
+| `proctor/testing/unsafe_eval.py`, `idiomaticity_eval.py`, `metrics.py` | Source-unsafety and Clippy-based measurements |
+| `stages/c2rust-adapter/`, `stages/crat-adapter/` | Envelope shims around C2Rust and Crat |
+| `stages/abstraction-recovery/` | Candidate abstraction identification and bounded rewrite/repair |
+| `stages/discipline-repair/` | Instrumentation-guided repair and evidence-based acceptance |
+| `stages/test-infrastructure/` | Harness/vector setup, generation, execution, relocation |
+| `stages/local-transformation/` | Fixed-analysis SCC transformation and worker orchestration |
+| `stages/example-stage/`, `stages/example-llm-stage/` | Minimal independent/shared-LLM examples |
+| `tools/` | Vendored harnesses and measurement tools |
 
-Keep `proctor/contracts/` dependency-light. It is the load-bearing public model used by other framework packages and optionally by stages.
+`.gitmodules` identifies C2Rust, Crat, abstraction recovery, discipline repair,
+and test infrastructure as separate checkouts. Keep their internal behavior
+in those repositories and their integration in PROCTOR. `proctor/contracts/`
+should remain dependency-light.
 
 ## Run lifecycle
 
-Follow this sequence in `start_run`/`execute_run`:
-
-1. Load and type-check merged TOML.
-2. Validate enabled stages and their artifact chain.
-3. Create `runs/<run_id>/`, save fully resolved `run.toml`, and record provenance in `run.json`.
-4. Copy supplied inputs into `inputs/{c,rust,tests,rule_set}`.
-5. For each enabled stage:
-   - derive a stage fingerprint and chained checkpoint key;
-   - create `stages/<NN>-<id>/work` and `out/artifacts`;
-   - write an absolute-path `stage_input.json`;
-   - run the stage, through its own `uv` project when it has `pyproject.toml`;
-   - capture process output in stage-local logs;
-   - validate `stage_output.json`;
-   - optionally gate a produced Rust project with the test package;
-   - update artifact state only after success;
-   - forward previous state on `skipped`;
-   - write `.checkpoint` and events.
-6. Return the current artifact state as the run result.
-
-A run directory is intended to be self-contained and auditable:
+`start_run` and `execute_run` resolve configuration, validate enabled stages,
+create a run directory, record provenance, and copy supplied inputs into it.
+For each stage the runner computes a checkpoint key, writes an absolute-path
+envelope, invokes the stage in its own directory/environment, captures logs,
+validates its response, and optionally applies the framework test-package gate.
+It updates artifact state only for successful outputs; `skipped` forwards the
+previous state. Failures stop by default, or continue with the last valid state
+when configured.
 
 ```text
-run.toml
-run.json
-events.jsonl
-inputs/
-stages/00-.../
-  stage_input.json
-  stage_output.json
-  stdout.log
-  stderr.log
-  usage.jsonl
-  .checkpoint
+run.toml / run.json / events.jsonl
+inputs/{c,rust,tests,rule_set}
+stages/<NN>-<configured-id>/
+  stage_input.json / stage_output.json
+  stdout.log / stderr.log / .checkpoint
+  usage.jsonl                      # shared-client stages
   work/
-  out/{rust,rule_set,artifacts}/
+  out/{rust,rule_set,artifacts}/     # destinations selected by manifest
 ```
 
-## Source-of-truth hierarchy
+A stage invocation handles one case; bench supplies parallelism across cases,
+and individual stages may also parallelize internally. Stage config is opaque
+to the framework and validated by the owning stage. Stages with `pyproject.toml`
+are invoked through their own `uv` project. Timeouts kill the spawned process
+group so Cargo/rustc/agent children do not outlive the stage.
 
-Resolve discrepancies in this order:
+## Source-of-truth boundary
 
-1. Tests and versioned JSON Schemas
-2. Current implementation and manifests/configs
-3. `docs/stage-contract.md` and `docs/writing-a-stage.md`
-4. READMEs
-5. Plans
-
-Plans explain why the code has its shape but contain milestones and examples that are not all implemented. Update current-facing docs when implementation changes; retain plans as historical/design material unless the task explicitly revises them.
-
-## Architectural invariants
-
-- Keep orchestration language-agnostic and file-based.
-- Keep batch parallelism outside stages: one stage invocation handles one case.
-- Pass stage-specific config opaquely; make the stage validate it.
-- Use environment variables for credentials and host/toolchain integration.
-- Make failures reproducible from saved envelopes and logs.
-- Isolate stage Python dependencies with `uv run --project <stage-dir>`.
-- Kill the entire spawned process group on timeout because stages launch Cargo/rustc children.
-- Record upstream tool pins through git submodules; keep upstream repositories separate from adapter code.
-- Keep normal unit tests independent from external APIs, real CRAT/C2Rust builds, and network access.
-- Keep TRACTOR vector verification outside the stage contract. Bench may verify final or per-stage Rust outputs after ordinary runs, but stages do not receive raw test vectors.
+Check code, focused tests, schemas, manifests, and stage config validators
+before relying on contributor docs or examples. `docs/stage-contract.md` and
+`docs/writing-a-stage.md` are documentation within the standalone PROCTOR
+repository and remain useful contract guides. Research goals and intended
+interfaces are retained in [research-intent.md](research-intent.md); they do not
+replace implemented contracts.

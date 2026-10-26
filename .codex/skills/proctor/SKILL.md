@@ -1,124 +1,101 @@
 ---
 name: proctor
-description: Repository onboarding and implementation guidance for the PROCTOR C-to-Rust orchestration framework. Use when working in this repository on pipeline configuration, stage contracts or adapters, orchestration and resume behavior, LLM providers and usage tracking, prompt/context infrastructure, test-package or TRACTOR-vector execution, abstraction recovery, local transformation and rule integration, benchmarks, end-to-end translation, documentation, debugging, reviews, or planning changes against the current implementation.
+description: Repository guide for the PROCTOR C-to-Rust pipeline. Use for general onboarding, stage composition and contracts, orchestration, configuration, shared LLM/context infrastructure, testing, and evaluation. Use local-transformation for detailed local-stage work and crat for compiler internals.
 ---
 
-# Proctor
+# PROCTOR
 
-Use this skill as the repository map for the PROCTOR orchestration framework. Start from the current code and tests; treat `plan_docs/` as design intent and deferred work unless the implementation confirms otherwise.
+PROCTOR is the research project and its standalone orchestration repository.
+This skill explains the whole pipeline at a consistent level; detailed local
+transformation and Crat implementation guidance have separate skills.
 
 ## Work at the PROCTOR root
 
-- Locate the standalone PROCTOR root by `pyproject.toml`, the `proctor/` package, and `stages/`; in the enclosing research workspace it is `proctor/` rather than the workspace root.
-- Resolve all paths in this skill relative to that root and inspect its own git/submodule status before editing.
-- Keep the repository self-contained. Do not make its code, tests, configs, fixtures, or tooling depend on the enclosing workspace's plans or helper files.
+- Locate the root containing `pyproject.toml`, the `proctor/` Python package,
+  `configs/`, and `stages/`. In this workspace it is `./proctor/`.
+- All implementation paths and commands below and in this skill's references
+  are relative to that PROCTOR root, unless another root is explicitly named.
+- Inspect its git/submodule status and preserve unrelated changes. The stage
+  checkouts listed in `.gitmodules` are independent repositories.
+- Use git-aware searches such as `rg` and `git ls-files`; exclude ignored run,
+  build, cache, and generated content from repository study.
+- Keep PROCTOR self-contained: code, tests, configs, fixtures, and tooling must
+  not depend on the enclosing workspace or its skill files.
 
 ## Route the task
 
-Read only the references needed for the task:
+Read only the references relevant to the request:
 
-- Read [architecture.md](references/architecture.md) first for unfamiliar or cross-cutting work, data flow, ownership, and source-of-truth rules.
-- Read [contracts-and-stages.md](references/contracts-and-stages.md) before changing envelopes, artifact kinds, `proctor.toml`, `stage.toml`, stage adapters, native stages, or the local-transformation protocol.
-- Read [configuration-and-runs.md](references/configuration-and-runs.md) before changing config, CLI behavior, run directories, checkpoint/resume, bench, LLM settings, usage, prompts, or context retrieval.
-- Read [testing-and-status.md](references/testing-and-status.md) before implementation or review to select tests and distinguish implemented behavior from planned features.
+- [architecture.md](references/architecture.md): pipeline, artifact flow,
+  package ownership, and run lifecycle.
+- [contracts-and-stages.md](references/contracts-and-stages.md): envelope and
+  manifest contracts, all stages, their validation, and their boundaries.
+- [configuration-and-runs.md](references/configuration-and-runs.md): config,
+  CLI, checkpoint/resume, bench, LLM usage, prompts, and context retrieval.
+- [testing-and-status.md](references/testing-and-status.md): test ownership,
+  component environments, real-toolchain coverage, and current limitations.
+- [research-intent.md](references/research-intent.md): project motivation,
+  intended component interfaces, and goals beyond the current implementation.
 
-For a narrow task, inspect the named implementation and its matching test after reading the relevant reference. Do not re-read the whole repository.
+Use `$local-transformation` for the local stage's scheduling, prompting,
+worker builds, observations, and publication. Use `$crat` for compiler passes,
+analysis, `crat-tool`, skeletons, validation, and rule mechanics. Read both when
+changing the Python/Rust boundary.
 
-## Establish current truth
+## Preserve boundaries
 
-Use this precedence when sources disagree:
+- Treat current code, tests, schemas, and stage validators together as evidence
+  of implemented behavior. READMEs, manifest comments, and research intent may
+  lag them; identify discrepancies before changing behavior.
+- Keep stages independently executable, single-case programs invoked through
+  absolute-path JSON envelopes with `--input` and `--output`. They may use
+  shared libraries but the orchestrator must not import their implementations.
+- Read input artifacts without modifying them; write transformed copies only
+  to output destinations and scratch data to the supplied work directory.
+- Keep envelope translation and upstream-tool invocation in adapters; change
+  the relevant tool checkout when the task targets compiler behavior.
+- Coordinate public shape changes across models, serializers, JSON Schemas,
+  manifests, artifact wiring, fixtures, and affected tests. Breaking envelope
+  changes require a schema-version decision; additive readers ignore unknown
+  fields and reject newer versions.
+- Treat `proctor.toml` as Rust-project target/API metadata after CRAT, distinct
+  from stage envelopes and the test stage's `testinfra.toml`.
+- Keep credentials in environment variables. Shared-client stages record every
+  LLM attempt, including errors, in the supplied usage log. Independent agent
+  stages have their own telemetry; do not assume `proctor report` sees it.
+- Do not version intermediate formats produced and consumed within one run by
+  the same implementation checkout. Use one current shape with strict
+  field/type validation and identity/digest checks. Do not version diagnostic
+  or human-facing report artifacts without automated consumers. Retain versions
+  for independently consumed reusable contracts, such as stage envelopes and
+  observation/rule documents, and numeric prompt versions for provenance.
 
-1. Executable tests and JSON Schemas
-2. Current Python/Rust implementation and checked-in stage manifests
-3. `docs/stage-contract.md` and `docs/writing-a-stage.md`
-4. Root and component READMEs
-5. `plan_docs/`
+## Verify changes
 
-Call out a discrepancy instead of silently implementing an older plan. Preserve unrelated worktree and submodule changes.
-
-## Work by change type
-
-### Change the framework
-
-1. Locate the owning package from [architecture.md](references/architecture.md).
-2. Read its focused unit test before editing.
-3. Preserve the contract boundary: the orchestrator invokes standalone stages; it does not import their implementation.
-4. Update typed models, serializers, schemas, docs, examples, and tests together when a public shape changes.
-5. Run the narrow test, then the default unit suite and static checks appropriate to the change.
-
-### Change or add a stage
-
-1. Read [contracts-and-stages.md](references/contracts-and-stages.md) and the authoritative contract docs.
-2. Start from `stages/example-stage/` for a framework-free stage or `stages/example-llm-stage/` for shared LLM infrastructure.
-3. Declare exact requirements and products in `stage.toml`.
-4. Read inputs only, use `framework.workdir` for scratch data, create outputs only at envelope destinations, and always emit a valid failure envelope on errors.
-5. Build and test transformation output inside the stage. Preserve or update `proctor.toml` according to the stage's manifest contract.
-6. Add manifest/contract tests and at least one direct stage or orchestrated test.
-
-### Change an adapter
-
-Keep the upstream `stages/c2rust/` and `stages/crat/` submodules unmodified unless the task explicitly targets those repositories. Put envelope translation, environment setup, caching, tool invocation, and output normalization in the corresponding `*-adapter/`.
-
-### Change local transformation
-
-1. Read [contracts-and-stages.md](references/contracts-and-stages.md), then use the `$crat` skill for changes that cross into `crat-tool` or shared pointer analysis.
-2. Keep SCC scheduling, prompts, LLM repair, transactional Cargo builds, dependency preparation, artifacts, and usage accounting in `stages/local-transformation/`; keep compiler-resolved structure, replacement, trusted `printf` templates, observations, and rules in Crat.
-3. Preserve the dual skeleton views: try optional rule applications through the applied view, but fall back to the baseline view for the whole SCC after a rule-involved candidate fails to compile.
-4. Treat the input rule set as read-only. Keep accepted function correspondence in stage state rather than `proctor.toml`; the stage produces a Rust project and diagnostic/learning artifacts, not a new rule set.
-5. Accept each SCC candidate only after structural validation when LLM output is used and a transactional `cargo build --lib` succeeds. SCCs completed by rules or mechanical conversions bypass the LLM and validator, but still require candidate installation and a build. Extract observations only from accepted transform regions. Finalize source and manifest together, then require a full Cargo build.
-6. Run `tests/test_local_transformation.py` and the focused Crat `tools` tests for the Rust surface you changed.
-
-### Change the stage contract
-
-Treat this as high-risk, cross-repository work:
-
-1. Decide whether the change is additive or breaking.
-2. Update dataclasses, JSON Schemas, validation, artifact wiring, docs, templates/adapters, and conformance tests as one change.
-3. Bump `schema_version` only for a breaking change.
-4. Preserve the rule that readers ignore unknown additive fields and reject newer schema versions.
-
-### Diagnose a run
-
-Inspect in this order:
-
-1. `run.json` for provenance and recorded inputs
-2. `run.toml` for the resolved configuration
-3. `events.jsonl` for orchestration order and gating
-4. `stages/<NN>-<id>/stage_input.json`
-5. `stage_output.json`, `.checkpoint`, `stdout.log`, `stderr.log`
-6. `out/artifacts/` and per-stage `usage.jsonl`
-
-Replay the stage from its saved envelope only after redirecting or clearing output destinations safely. Use `proctor resume <run>` for normal recovery and `--from <stage>` after intentional intermediate edits.
-
-## Preserve core invariants
-
-- Keep every stage a single-case standalone program invoked with `--input` and `--output`.
-- Never mutate an input artifact; copy then modify.
-- Keep paths in envelopes absolute and paths recorded inside run metadata relocatable where intended.
-- Let `skipped` forward existing state without copying an output.
-- Keep provider credentials in environment variables, never config or run records.
-- Report every LLM attempt, including errors, to the stage usage log when using the shared client.
-- Treat `proctor.toml` as the Rust-project compatibility manifest after CRAT.
-- Keep default tests free of real toolchain, network, and API-key requirements; mark real-toolchain coverage `e2e`.
-
-## Verify proportionally
-
-Use [testing-and-status.md](references/testing-and-status.md) to choose focused tests. The normal ladder is:
+Choose focused checks from [testing-and-status.md](references/testing-and-status.md).
+From the PROCTOR root, the framework checks are:
 
 ```bash
-uv run pytest <focused-test>
+uv run pytest tests/test_<area>.py
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy proctor
 ```
 
-Run `uv run pytest -m e2e` only when the affected adapter, real CRAT/C2Rust flow, Rust index, or TRACTOR vector harness requires it and prerequisites are available. Validate configs with `uv run proctor validate -c <config>` before expensive runs.
+Stage submodules have separate environments and suites; framework pytest does
+not collect all stage-local tests. Run real-toolchain `e2e` coverage only when
+relevant and prerequisites are available. Use `uv run proctor validate -c CFG`
+for inexpensive pipeline wiring checks before an authorized run.
 
-## Avoid stale assumptions
+## Maintain this skill
 
-Do not present these planned items as implemented: discipline repair, test-vector-to-test-package conversion or `make-tests`, per-stage `gate_tests`, test packages as stage-produced artifacts, chained/merge bench rule-set policies, automatic intermediate pruning, token-rate or budget enforcement, `prompts.lock`, or `check-stage`.
-
-Do not describe abstraction recovery as an unimplemented scaffold. A narrow direct-Claude implementation exists for function-local manual dynamic arrays, although its older default config comments and full-pipeline E2E still assume scaffold-style skipping.
-
-Do not assume the global post-stage test gate is safe after C2Rust: executable cases are still library-shaped until CRAT's `bin` pass.
+Read the complete affected entrypoint/reference and verify material claims
+against current code, tests, schemas, and manifests. Revise the section that
+owns the behavior, removing obsolete claims and duplication; do not append
+change history. Keep the general pipeline and all stages at comparable depth,
+move detailed local/compiler mechanics to their owning skills, and label
+research intent separately from implemented behavior. Give new and existing
+features detail according to their importance, not recency or test volume.
+Review the complete result and diff for accurate paths, consistent terminology,
+balanced coverage, and working reference links.

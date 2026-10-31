@@ -43,6 +43,9 @@ library and filesystem dispatch in its thin CLI.
 
 ## Preserve the stage boundary
 
+- Keep local prompt versions fixed at `1`, using IDs and rendered content hashes
+  for provenance. Do not add revision history or backward compatibility logic,
+  or alter the shared framework or other stages for local prompt versioning.
 - Inputs and the optional rule set are read-only. All preparation and mutation
   happen in private working projects; publication requires a successful full
   Cargo build.

@@ -14,12 +14,12 @@
 
 - Start with `src/bin/crat.rs` when changing pass order, CLI/config wiring, project copying, dependency changes, or output behavior.
 - All paths and commands in this reference are relative to the Crat root, `proctor/stages/crat/` in the workspace. `rust-toolchain.toml` pins `nightly-2025-06-23` with rustc development components; use that toolchain for compiler-private APIs.
-- Ownership analysis also requires native Z3 development dependencies (`libz3-dev` on Ubuntu/Debian); check `README.md` and `crates/pointer_replacer/Cargo.toml` for setup.
-- Expect transformation passes `Expand`, `Preprocess`, `Prepare`, `Extern`, `Unsafe`, `Unexpand`, `Split`, `Bin`, `Check`, `Format`, `Interface`, `Libc`, `OutParam`, `Lock`, `Union`, `Punning`, `Enum`, `Io`, `Pointer`, `Static`, and `Simpl`; expect standalone analyses `Andersen` and `OutParam`.
+- Ownership analysis also requires native Z3 development dependencies (`libz3-dev` on Ubuntu/Debian); check `README.md` and both pointer crates' `Cargo.toml` files for setup.
+- Expect transformation passes `Expand`, `Preprocess`, `Prepare`, `Extern`, `Unsafe`, `Unexpand`, `Split`, `Bin`, `Check`, `Format`, `Interface`, `Libc`, `OutParam`, `Lock`, `Union`, `Punning`, `Enum`, `Io`, `Pointer`, `PointerBo`, `PointerStructArrays`, `PointerStructParamFields`, `PointerEpochSplit`, `PointerArrayLocalProvenance`, `Static`, and `Simpl`; expect standalone analyses `Andersen` and `OutParam`.
 - The CLI locates the crate library, optionally copies the input project, and invokes most operations through `utils::compilation::run_compiler_on_path`.
 - TOML configuration supplies pass-specific defaults; CLI pass lists extend configured lists, boolean options enable configured flags, and supplied scalar options override them. Passes run in the requested order. Choose either transformation passes or one standalone analysis, never both.
-- Keep dependency side effects at the CLI/publication boundary. Pass results currently request `bytemuck`, `num-traits`, `tempfile`, or `proctor-libc` as needed.
-- Propagate `c_exposed_fns` through interface, unsafe, pointer, Andersen, outparam, and punning configs. Use `points_to_file` to connect Andersen output to union and outparam logic.
+- Keep dependency side effects at the pass's publication boundary. Pass results currently request `bytemuck`, `num-traits`, `tempfile`, or `proctor-libc` as needed; `pointer-bo` publishes source and required bytemuck dependencies through its library entrypoint.
+- Propagate `c_exposed_fns` through interface, unsafe, `pointer`, `pointer-bo`, Andersen, outparam, and punning configs. Use `points_to_file` to connect Andersen output to union and outparam logic.
 - Compiler helpers resolve extern crates from `deps_crate/target/<host>/debug/deps`, rather than the input project's Cargo build. Build `deps_crate` with an explicit host target before compiler-backed tests or analyses, as in `.github/workflows/ci.yml`; use `DIR=<Crat-root>` when invoking helpers away from their supported working directories. Do not assume building the main workspace prepares this excluded crate.
 
 Use these common rustc patterns:
@@ -104,6 +104,11 @@ Use these common rustc patterns:
 
 ## Data-representation passes
 
+### Pointer and PointerBo
+
+- `--pass pointer` uses `crates/pointer_replacer` and `[pointer]`; see [pointer.md](pointer.md) for its preprocessing, shared inference, expression rewriting, and skeleton consumer.
+- `--pass pointer-bo` uses `crates/pointer_replacer_bo` and `[pointer-bo]`; see [pointer-bo.md](pointer-bo.md) for the coupled borrow/ownership solver and its separate verified rewrite pipeline.
+
 ### OutParam
 
 - Goal: convert pointer output parameters into returned values, `Option`, or `Result`.
@@ -181,4 +186,4 @@ Use these common rustc patterns:
 ## Focused verification
 
 - Run the affected crate's tests first, for example `cargo test -p passes`, `cargo test -p io_replacer`, or `cargo test -p union_replacer`. Use `cargo test -p passes preparer::tests` for `Prepare`.
-- Run `cargo test --workspace` when changing the CLI, shared `utils`, pass interactions, or public cross-crate APIs.
+- Run `cargo test --bin crat` for CLI parsing and configuration. For shared `utils`, pass interactions, or public cross-crate APIs, select coverage across the affected crates while respecting the skill's filesystem constraints; the BO suite includes fixtures that write temporary trees.

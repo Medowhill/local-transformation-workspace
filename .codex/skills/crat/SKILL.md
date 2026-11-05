@@ -1,11 +1,11 @@
 ---
 name: crat
-description: "Understand and change Crat compiler analyses, transformation passes, shared pointer inference, and crat-tool skeleton, validation, replacement, observation, and rule mechanics. Use for compiler-side work; use local-transformation for the Python stage that coordinates these tools."
+description: "Understand and change Crat compiler analyses, transformation passes, pointer and borrow/ownership inference, and crat-tool skeleton, validation, replacement, observation, and rule mechanics. Use for compiler-side work; use local-transformation for the Python stage that coordinates these tools."
 ---
 
 # Crat
 
-Crat improves C2Rust translations through compiler analysis and Rust rewrites. Its ordinary pass pipeline and its local-transformation tools share analysis code but have different transformation contracts.
+Crat improves C2Rust translations through compiler analysis and Rust rewrites. The `pointer` and `pointer-bo` passes have separate inference and rewrite pipelines; local-transformation tools share the original pointer analysis but have a different transformation contract.
 
 ## Work at the Crat root
 
@@ -19,16 +19,17 @@ Crat improves C2Rust translations through compiler analysis and Rust rewrites. I
 Read only the references needed for the task:
 
 - [crat.md](references/crat.md): ordinary `crat` passes and analyses, compiler setup, configuration and dependency publication, plus `crat-finder` and `crat-merge`.
-- [pointer.md](references/pointer.md): shared pointer inference and the distinction between initial skeleton decisions and ordinary expression rewriting. Combine it with the reference for the consumer being changed.
+- [pointer.md](references/pointer.md): original pointer inference shared by the `pointer` pass and initial skeleton decisions. Combine it with the reference for the consumer being changed.
+- [pointer-bo.md](references/pointer-bo.md): the `pointer-bo` pass's coupled borrow/ownership analysis, evidence, rewrite planning, verification, and run controls.
 - [crat-tool.md](references/crat-tool.md): skeleton views, preservation and validation, frozen SCC replacement and assembly, finalization, deterministic `printf` lowering, observations, and reusable rules.
 
 Use `$proctor` for stage adapters and pipeline integration, and `$local-transformation` for the Python stage's scheduling, prompts, LLM repair, build acceptance, and artifacts. The supported local-stage input contract belongs there; low-level compiler tests can intentionally cover a broader language.
 
 ## Preserve compiler boundaries
 
-- Keep CLI argument parsing and filesystem publication in `src/bin/`; implement compiler behavior in the owning library crate.
+- Keep CLI argument parsing in `src/bin/`; implement compiler behavior in the owning library crate and follow its existing publication boundary.
 - Reuse compiler-resolved identity and the shared AST/HIR/MIR mapping helpers. Surface spelling alone does not identify calls, bindings, types, or module paths.
-- Preserve the distinction between the ordinary pointer rewrite and `crat-tool`'s fixed initial target types; shared changes need coverage for both consumers.
+- Keep `pointer` (`pointer_replacer`), `pointer-bo` (`pointer_replacer_bo`), and `crat-tool`'s fixed initial target types distinct. Skeletons still use the original analysis; changes to reused analyses need coverage for their affected consumers.
 - Keep run-internal tool formats strict and unversioned. Reusable observation and rule documents retain their schema version; avoid adding compatibility readers for old intermediates.
 - Structural validity, successful compilation, behavioral equivalence, and C ABI compatibility are separate claims. The tools do not establish the latter two.
 
@@ -38,7 +39,7 @@ Use `$proctor` for stage adapters and pipeline integration, and `$local-transfor
 - Keep planning labels such as phase and amendment only in planning documents, never in PROCTOR or Crat implementation surfaces.
 - Run `cargo fmt` and `cargo clippy --workspace --all-targets` from the Crat root after modifying Rust source.
 - Resolve Clippy warnings. Address `len_without_is_empty`, `too_many_arguments`, and `type_complexity` with targeted `#[allow(clippy::...)]` attributes rather than reshaping code for those lints.
-- Run the focused package or module tests named in the selected reference. Run `cargo test --workspace` for cross-cutting changes when practical.
+- Run the focused package or module tests named in the selected reference. For cross-cutting changes, cover each affected crate with tests that satisfy the same constraints; inspect existing helpers for filesystem side effects before expanding coverage.
 
 ## Maintain this skill
 

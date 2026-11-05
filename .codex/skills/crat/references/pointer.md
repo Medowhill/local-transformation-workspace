@@ -1,5 +1,9 @@
 # Shared pointer analysis and rewriting
 
+This reference covers `pointer_replacer`, shared by the `pointer` pass and
+`crat-tool` skeleton generation. The separate `pointer-bo` pipeline is described
+in [pointer-bo.md](pointer-bo.md).
+
 ## Shared analysis
 
 - Start with `crates/pointer_replacer/src/lib.rs` for exports and `rewriter/mod.rs` for the shared analysis pipeline.
@@ -10,12 +14,13 @@
 
 ## Ordinary `crat` pointer pass
 
-- Run pointer stages from `Pass::Pointer` in this order:
+- By default, run pointer stages from `Pass::Pointer` in this order:
   1. `rewrite_struct_arrays`
   2. `rewrite_struct_param_fields`
   3. `rewrite_epoch_split`
   4. `rewrite_array_local_provenance`
   5. `replace_local_borrows`
+- `--pointer-skip-preprocessing` skips the first four stages. They are also independently selectable as `pointer-struct-arrays`, `pointer-struct-param-fields`, `pointer-epoch-split`, and `pointer-array-local-provenance`; these use `[pointer]` and are not automatic preprocessing for `pointer-bo`.
 - Recompile between changed preprocessing stages because each returns rewritten source plus a `changed` flag.
 - Struct-parameter field specialization also returns interface records. The CLI preserves a nonempty `field_spec_map.json` for the `Interface` pass; a later no-op pointer rerun must not erase it.
 - Use default `PointerDecisionOptions`, including offset-sign analysis. Select `SliceCursor` or `SliceCursorMut` when potentially negative offsets require position tracking.
@@ -45,3 +50,4 @@
 - Run `cargo test -p pointer_replacer` for shared analysis, decision, or ordinary rewrite changes.
 - Run `cargo test -p tools skeleton::tests` for initial-decision consumption, type rendering, lifetime, or tools-only option changes.
 - Run both suites when changing `PtrKind`, `InitialPointerDecisions`, `PointerDecisionOptions`, `SigDecision`, or `SigDecisions`.
+- When changing analyses or utilities reused by `pointer_replacer_bo`, also select affected tests from [pointer-bo.md](pointer-bo.md#focused-verification); preserve its analysis cache fingerprint coverage.
